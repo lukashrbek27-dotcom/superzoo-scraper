@@ -22,9 +22,7 @@ jobs:
         run: npm install
 
       - name: Instalace Playwright prohlížečů
-        run: |
-          chmod +x node_modules/.bin/playwright
-          node node_modules/.bin/playwright install chromium --with-deps
+        run: npx --yes playwright install chromium --with-deps
 
       - name: Spustit scraper
         run: node scraper.js
