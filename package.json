@@ -1,0 +1,13 @@
+{
+  "name": "superzoo-scraper",
+  "version": "1.0.0",
+  "description": "Scraper krmiv ze SuperZoo.cz pro Mazlíček+",
+  "main": "scraper.js",
+  "scripts": {
+    "scrape": "node scraper.js",
+    "test": "node inspect.js"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}
