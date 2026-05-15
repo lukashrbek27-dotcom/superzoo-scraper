@@ -32,6 +32,7 @@ jobs:
       - name: Zkontroluj změny a pošli email
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -40,14 +41,13 @@ jobs:
             echo "Žádné změny"
             exit 0
           fi
-          DIFF=$(git diff --staged --stat)
           DATE=$(date +'%Y-%m-%d')
           curl -s -X POST https://api.resend.com/emails \
             -H "Authorization: Bearer $RESEND_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "{\"from\":\"Mazlicek+ <notifikace@mazlicekplus.cz>\",\"to\":[\"lukashrbek27@gmail.com\"],\"subject\":\"SuperZoo: změny produktů $DATE\",\"html\":\"<h2>Změny detekována</h2><pre>$DIFF</pre>\"}"
+            -d "{\"from\":\"Mazlicek+ <notifikace@mazlicekplus.cz>\",\"to\":[\"lukashrbek27@gmail.com\"],\"subject\":\"SuperZoo zmeny $DATE\",\"html\":\"<h2>Zmeneny produkty</h2>\"}"
           git commit -m "Update products $DATE"
-          git push
+          git push https://x-access-token:$GITHUB_TOKEN@github.com/lukashrbek27-dotcom/superzoo-scraper.git
 
       - name: Pošli email při chybě
         if: failure()
