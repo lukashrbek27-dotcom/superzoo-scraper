@@ -2,7 +2,7 @@ name: Scrape SuperZoo produkty
 
 on:
   schedule:
-    - cron: '0 4 * * 1'  # Každé pondělí ve 4:00
+    - cron: '0 4 * * *'  # Každé pondělí ve 4:00
   workflow_dispatch:       # Manuální spuštění z GitHubu
 
 jobs:
