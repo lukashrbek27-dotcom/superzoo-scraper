@@ -6,12 +6,12 @@ const AFFILIATE_BASE = 'https://www.dpbolvw.net/click-101752886-12607708?url=';
 
 const CATEGORIES = [
     // Psi
-    { name: 'Granule pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/krmivo-a-pamlsky/granule/' },
-    { name: 'Veterinární diety pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/krmivo-a-pamlsky/veterinarni-diety/' },
+    { name: 'Granule pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/krmivo-granule/granule/' },
+{ name: 'Veterinární diety pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/granule/veterinarni-diety/' },
 
     // Kočky
     { name: 'Granule pro kočky', animalType: 'cat', url: 'https://www.superzoo.cz/kocky/krmivo-a-pamlsky/granule-pro-kocky/' },
-    { name: 'Veterinární diety pro kočky', animalType: 'cat', url: 'https://www.superzoo.cz/kocky/krmivo-a-pamlsky/veterinarni-diety-pro-kocky/' },
+    { name: 'Veterinární diety pro kočky', animalType: 'cat', url: 'https://www.superzoo.cz/kocky/krmivo-a-pamlsky/veterinarni-diety/' },
 
     // Hlodavci
     { name: 'Plnohodnotné krmivo pro hlodavce', animalType: 'rodent', url: 'https://www.superzoo.cz/drobni-savci/krmivo-a-doplnky-stravy/plnohodnotne-krmivo/' },
