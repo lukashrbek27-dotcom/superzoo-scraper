@@ -21,7 +21,7 @@ jobs:
       - name: Instalace závislostí
         run: npm install
 
-     - name: Instalace Playwright prohlížečů
+      - name: Instalace Playwright prohlížečů
         run: node_modules/playwright/bin/playwright.js install chromium --with-deps
 
       - name: Spustit scraper
