@@ -3,7 +3,7 @@ name: Scrape SuperZoo produkty
 on:
   schedule:
     - cron: '0 4 * * *'  # Každý den ve 4:00
-  workflow_dispatch:       # Manuální spuštění z GitHubu
+  workflow_dispatch:
 
 jobs:
   scrape:
@@ -22,7 +22,9 @@ jobs:
         run: npm install
 
       - name: Instalace Playwright prohlížečů
-        run: npx playwright install chromium --with-deps
+        run: |
+          chmod +x node_modules/.bin/playwright
+          node node_modules/.bin/playwright install chromium --with-deps
 
       - name: Spustit scraper
         run: node scraper.js
@@ -34,27 +36,16 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add products.json
-
           if git diff --staged --quiet; then
             echo "Žádné změny"
             exit 0
           fi
-
-          # Zjisti co se změnilo
           DIFF=$(git diff --staged --stat)
           DATE=$(date +'%Y-%m-%d')
-
-          # Pošli email přes Resend
           curl -s -X POST https://api.resend.com/emails \
             -H "Authorization: Bearer $RESEND_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"from\": \"Mazlicek+ <notifikace@mazlicekplus.cz>\",
-              \"to\": [\"lukashrbek27@gmail.com\"],
-              \"subject\": \"SuperZoo: změny produktů $DATE\",
-              \"html\": \"<h2>SuperZoo scraper detekoval změny</h2><p>Datum: $DATE</p><pre>$DIFF</pre><p><a href='https://github.com/lukashrbek27-dotcom/superzoo-scraper/commits/main'>Zobraz změny na GitHubu</a></p>\"
-            }"
-
+            -d "{\"from\":\"Mazlicek+ <notifikace@mazlicekplus.cz>\",\"to\":[\"lukashrbek27@gmail.com\"],\"subject\":\"SuperZoo: změny produktů $DATE\",\"html\":\"<h2>Změny detekována</h2><pre>$DIFF</pre>\"}"
           git commit -m "Update products $DATE"
           git push
 
@@ -67,9 +58,4 @@ jobs:
           curl -s -X POST https://api.resend.com/emails \
             -H "Authorization: Bearer $RESEND_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"from\": \"Mazlicek+ <notifikace@mazlicekplus.cz>\",
-              \"to\": [\"lukashrbek27@gmail.com\"],
-              \"subject\": \"⚠️ SuperZoo scraper selhal $DATE\",
-              \"html\": \"<h2>Scraper selhal</h2><p>Datum: $DATE</p><p><a href='https://github.com/lukashrbek27-dotcom/superzoo-scraper/actions'>Zobraz chybu na GitHubu</a></p>\"
-            }"
+            -d "{\"from\":\"Mazlicek+ <notifikace@mazlicekplus.cz>\",\"to\":[\"lukashrbek27@gmail.com\"],\"subject\":\"⚠️ SuperZoo scraper selhal $DATE\",\"html\":\"<h2>Scraper selhal</h2>\"}"
