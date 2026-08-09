@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 2,
+  "baselineContract": {
+    "kind": "immutable_legacy_raw_comparator_source",
+    "artifactPath": "test/fixtures/baselines/superzoo-legacy-1405.json",
+    "provenance": "Reviewed legacy SuperZoo raw snapshot copied byte-for-byte from the pre-hardening local snapshot; audit/test fixture only, never runtime or live output.",
+    "expectedSha256": "db5eb6c3338f50a3ae30fbb2db6f3beab559a8867fa5e219952fa085a27b9dd8",
+    "capturedAt": "2026-05-18T07:10:37.475Z",
+    "preFilter": {
+      "totalProducts": 1405,
+      "categoryCounts": {
+        "Granule pro psy": 781,
+        "Veterinární diety pro psy": 19,
+        "Granule pro kočky": 278,
+        "Veterinární diety pro kočky": 50,
+        "Plnohodnotné krmivo pro hlodavce": 126,
+        "Krmivo a pamlsky pro hlodavce": 151
+      }
+    },
+    "postExclusion": {
+      "totalProducts": 1377,
+      "filteredOutProducts": 28,
+      "categoryCounts": {
+        "Granule pro psy": 781,
+        "Veterinární diety pro psy": 19,
+        "Granule pro kočky": 278,
+        "Veterinární diety pro kočky": 50,
+        "Plnohodnotné krmivo pro hlodavce": 126,
+        "Krmivo a pamlsky pro hlodavce": 123
+      }
+    }
+  },
+  "thresholds": {
+    "maximumDropPercent": 20,
+    "minimumTotalProducts": 1124,
+    "minimumCategoryProducts": {
+      "Granule pro psy": 625,
+      "Veterinární diety pro psy": 16,
+      "Granule pro kočky": 223,
+      "Veterinární diety pro kočky": 40,
+      "Plnohodnotné krmivo pro hlodavce": 101,
+      "Krmivo a pamlsky pro hlodavce": 121
+    },
+    "maximumRejectedCards": 0,
+    "maximumUnparseableCards": 0,
+    "maximumDuplicateSourceIdentities": 0,
+    "maximumDuplicateCanonicalIdentities": 0
+  },
+  "sourcePolicy": {
+    "allowedHosts": ["superzoo.cz", "www.superzoo.cz"],
+    "canonicalIdentityHost": "www.superzoo.cz",
+    "identityQueryParameterAllowlist": [],
+    "requiredCategories": [
+      "Granule pro psy",
+      "Veterinární diety pro psy",
+      "Granule pro kočky",
+      "Veterinární diety pro kočky",
+      "Plnohodnotné krmivo pro hlodavce",
+      "Krmivo a pamlsky pro hlodavce"
+    ],
+    "forbiddenNamePatterns": [
+      "\\bseno\\b",
+      "\\bhay\\b",
+      "\\btimothy\\b",
+      "\\blactol\\b",
+      "puppy\\s+milk",
+      "kitty\\s+milk",
+      "sušen[ée]\\s+ml[ée]ko"
+    ],
+    "forbiddenCategoryPatterns": ["seno", "hay"]
+  },
+  "catalogExclusionContract": {
+    "activeExclusionCount": 35,
+    "superZooStableUrlCount": 24,
+    "manualReviewLaterCount": 3,
+    "legacyExcludedProductIds": [
+      "krmeni-beaphar-lactol-kitty-milk-250g",
+      "krmeni-beaphar-lactol-kitty-milk-500g",
+      "krmeni-beaphar-lactol-puppy-milk-250g",
+      "krmeni-beaphar-lactol-puppy-milk-2kg",
+      "krmeni-beaphar-lactol-puppy-milk-500g",
+      "superzoo-ostatni-seno-krmne-lisovane-0-7kg",
+      "superzoo-ostatni-seno-krmne-lisovane-1-6kg",
+      "superzoo-ostatni-seno-krmne-lisovane-2-5kg",
+      "superzoo-ostatni-seno-nature-land-hay-lucni-0-8kg",
+      "superzoo-ostatni-seno-nature-land-hay-lucni-10kg",
+      "superzoo-ostatni-seno-nature-land-hay-lucni-2kg",
+      "superzoo-ostatni-seno-nature-land-hay-lucni-3kg",
+      "superzoo-ostatni-seno-pan-malina-classic-1-2kg",
+      "superzoo-ostatni-seno-pan-malina-classic-2kg",
+      "superzoo-ostatni-seno-pan-malina-classic-450g",
+      "superzoo-ostatni-seno-pan-malina-classic-800g",
+      "krmeni-kiki-heno-plus-seno-1kg",
+      "superzoo-apetit-johnny-hay-seno-5kg-150-litru-5kg",
+      "superzoo-ostatni-ceske-seno-vojteskove-granule-2kg",
+      "superzoo-ostatni-seno-ceske-lucni-granulovane-2kg",
+      "superzoo-ostatni-seno-ceske-prirodni-lucni-2kg",
+      "superzoo-ostatni-seno-nature-land-hay-bloky-s-mrkvi-600g",
+      "superzoo-ostatni-seno-nature-land-hay-bloky-s-pampeliskou-600g",
+      "superzoo-ostatni-seno-nature-land-hay-s-cervenou-repou-650g-650g",
+      "superzoo-ostatni-seno-nature-land-hay-s-chrpou-650g-650g",
+      "superzoo-ostatni-seno-nature-land-hay-s-hermankem-650g",
+      "superzoo-ostatni-seno-nature-land-hay-s-kvety-slezu-650g",
+      "superzoo-ostatni-seno-nature-land-hay-s-mrkvi-650g-650g",
+      "superzoo-ostatni-seno-pan-malina-s-hermankem-450g",
+      "superzoo-ostatni-seno-pan-malina-s-mesickem-lekarskym-450g",
+      "svetchovatelu-limara-seno-2kg-s-pridavkem-cervene-repy-2kg",
+      "svetchovatelu-limara-seno-2kg-s-pridavkem-hermanku-a-pampelisky-2kg",
+      "svetchovatelu-limara-seno-2kg-s-pridavkem-mesicku-2kg",
+      "svetchovatelu-limara-seno-2kg-s-pridavkem-mrkve-2kg",
+      "svetchovatelu-limara-seno-2kg-s-pridavkem-pastinaku-2kg"
+    ],
+    "superZooExcludedCanonicalUrls": [
+      "https://www.superzoo.cz/seno-krmne-lisovane-0-7kg",
+      "https://www.superzoo.cz/seno-zoo-box-krmne-lisovane-1-6kg",
+      "https://www.superzoo.cz/seno-zoo-box-krmne-lisovane-1-6kg-2",
+      "https://www.superzoo.cz/seno-nature-land-hay-lucni-0-8kg",
+      "https://www.superzoo.cz/seno-nature-land-hay-lucni-10kg",
+      "https://www.superzoo.cz/seno-nature-land-hay-lucni-2kg",
+      "https://www.superzoo.cz/seno-nature-land-hay-lucni-3kg",
+      "https://www.superzoo.cz/seno-pan-malina-classic-1-2kg",
+      "https://www.superzoo.cz/seno-pan-malina-classic-2kg",
+      "https://www.superzoo.cz/seno-pan-malina-classic-450g",
+      "https://www.superzoo.cz/seno-pan-malina-classic-800g",
+      "https://www.superzoo.cz/apetit-johnny-hay-seno-5kg-150-litru",
+      "https://www.superzoo.cz/vojteskove-granule-2kg",
+      "https://www.superzoo.cz/seno-ceske-lucni-granulovane-2kg",
+      "https://www.superzoo.cz/seno-ceske-prirodni-lucni-2kg",
+      "https://www.superzoo.cz/seno-nature-land-hay-bloky-s-mrkvi-600g",
+      "https://www.superzoo.cz/seno-nature-land-hay-bloky-s-pampeliskou-600g",
+      "https://www.superzoo.cz/seno-nature-land-hay-s-cervenou-repou-650g",
+      "https://www.superzoo.cz/seno-nature-land-hay-s-chrpou-650g",
+      "https://www.superzoo.cz/seno-nature-land-hay-s-hermankem-650g",
+      "https://www.superzoo.cz/seno-nature-land-hay-s-kvety-slezu-650g",
+      "https://www.superzoo.cz/seno-nature-land-hay-s-mrkvi-650g",
+      "https://www.superzoo.cz/seno-pan-malina-s-hermankem-450g",
+      "https://www.superzoo.cz/seno-pan-malina-s-mesickem-lekarskym-450g"
+    ],
+    "manualReviewLaterProductIds": [
+      "krmeni-avicentra-osmak-degu-deluxe-1kg",
+      "krmeni-avicentra-osmak-degu-deluxe-2x1kg",
+      "krmeni-avicentra-osmak-degu-deluxe-500g"
+    ]
+  }
+}

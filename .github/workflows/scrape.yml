@@ -1,61 +1,85 @@
 name: Scrape SuperZoo produkty
 
 on:
-  schedule:
-    - cron: '0 4 * * *'  # Každý den ve 4:00
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: superzoo-review-global
+  cancel-in-progress: false
+
 jobs:
-  scrape:
+  scrape-review:
     runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      REVIEW_DIR: ${{ runner.temp }}/superzoo-review
+      PREFLIGHT_DIR: ${{ runner.temp }}/superzoo-baseline-preflight
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
 
-      - name: Instalace závislostí
-        run: npm install
+      - name: Install locked dependencies
+        run: npm ci
 
-      - name: Instalace Playwright prohlížečů
-        run: |
-          npm install -g playwright
-          playwright install chromium --with-deps
+      - name: Create temporary review directories
+        run: mkdir -p "$REVIEW_DIR" "$PREFLIGHT_DIR"
 
-      - name: Spustit scraper
-        run: node scraper.js
+      - name: Prepare immutable baseline preflight
+        run: node prepare-review-snapshot.js --output="$PREFLIGHT_DIR/baseline-preflight-raw.json" --report="$PREFLIGHT_DIR/baseline-contract.json"
 
-      - name: Zkontroluj změny a pošli email
-        env:
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add products.json
-          if git diff --staged --quiet; then
-            echo "Žádné změny"
-            exit 0
-          fi
-          DATE=$(date +'%Y-%m-%d')
-          curl -s -X POST https://api.resend.com/emails \
-            -H "Authorization: Bearer $RESEND_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"from\":\"Mazlicek+ <notifikace@mazlicekplus.cz>\",\"to\":[\"lukashrbek27@gmail.com\"],\"subject\":\"SuperZoo zmeny $DATE\",\"html\":\"<h2>Zmeneny produkty</h2>\"}"
-          git commit -m "Update products $DATE"
-          git push https://x-access-token:$GITHUB_TOKEN@github.com/lukashrbek27-dotcom/superzoo-scraper.git
+      - name: Validate immutable baseline preflight
+        run: node validate-raw.js --input="$PREFLIGHT_DIR/baseline-preflight-raw.json" --report="$PREFLIGHT_DIR/baseline-validation.json"
 
-      - name: Pošli email při chybě
-        if: failure()
-        env:
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-        run: |
-          DATE=$(date +'%Y-%m-%d')
-          curl -s -X POST https://api.resend.com/emails \
-            -H "Authorization: Bearer $RESEND_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"from\":\"Mazlicek+ <notifikace@mazlicekplus.cz>\",\"to\":[\"lukashrbek27@gmail.com\"],\"subject\":\"⚠️ SuperZoo scraper selhal $DATE\",\"html\":\"<h2>Scraper selhal</h2>\"}"
+      - name: Remove derived baseline payload
+        if: always()
+        run: rm -f "$PREFLIGHT_DIR/baseline-preflight-raw.json"
+
+      - name: Install Playwright Chromium system dependencies
+        run: npx playwright install chromium --with-deps
+
+      - name: Scrape into temporary staging
+        run: node scraper.js --output="$REVIEW_DIR/superzoo-raw.json" --failure-report="$REVIEW_DIR/scrape-failure.json"
+
+      - name: Validate raw staging output
+        run: node validate-raw.js --input="$REVIEW_DIR/superzoo-raw.json" --report="$REVIEW_DIR/raw-validation.json"
+
+      - name: Convert into temporary staging
+        run: node convert-superzoo.js --input="$REVIEW_DIR/superzoo-raw.json" --output="$REVIEW_DIR/superzoo-converted-review.json"
+
+      - name: Validate converted staging output
+        run: node validate-converted.js --input="$REVIEW_DIR/superzoo-converted-review.json" --report="$REVIEW_DIR/converted-validation.json"
+
+      - name: Create validation summary
+        if: always()
+        run: node generate-review-report.js --baseline="$PREFLIGHT_DIR/baseline-validation.json" --raw="$REVIEW_DIR/raw-validation.json" --converted="$REVIEW_DIR/converted-validation.json" --failure="$REVIEW_DIR/scrape-failure.json" --output="$REVIEW_DIR/validation-summary.md"
+
+      - name: Upload validated review artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: superzoo-review-valid-${{ github.run_id }}
+          path: ${{ runner.temp }}/superzoo-review/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: superzoo-diagnostics-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/superzoo-review/
+            ${{ runner.temp }}/superzoo-baseline-preflight/baseline-contract.json
+            ${{ runner.temp }}/superzoo-baseline-preflight/baseline-validation.json
+          if-no-files-found: warn
+          retention-days: 14

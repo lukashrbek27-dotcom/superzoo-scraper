@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "source": "Mazlíček+ src/data/partner-foods.json",
+    "sourceCatalogSha256": "6dc596ff1c64bab86ec0413bd8d0e5ae28c19681f7537c3435f5f6ac193f8c23",
+    "purpose": "Minimal pinned compatibility examples from the current runtime catalog; not a live catalog audit."
+  },
+  "offers": [
+    {
+      "productId": "superzoo-ontario-adult-large-lamb-brown-rice-20-20000",
+      "affiliateUrl": "https://www.dpbolvw.net/click-101752886-12607708?url=https%3A%2F%2Fwww.superzoo.cz%2Fontario-adult-large-lamb-brown-rice-20kg%2F"
+    },
+    {
+      "productId": "superzoo-rasco-premium-adult-lamb-rice-15kg-15000",
+      "affiliateUrl": "https://www.dpbolvw.net/click-101752886-12607708?url=https%3A%2F%2Fwww.superzoo.cz%2Frasco-premium-adult-lamb-rice-15kg%2F"
+    },
+    {
+      "productId": "superzoo-n-d-pumpkin-dog-adult-medium-maxi-12000",
+      "affiliateUrl": "https://www.dpbolvw.net/click-101752886-12607708?url=https%3A%2F%2Fwww.superzoo.cz%2Fn-d-pumpkin-dog-adult-medium-maxi-lamb-blueberry-12kg%2F"
+    }
+  ]
+}

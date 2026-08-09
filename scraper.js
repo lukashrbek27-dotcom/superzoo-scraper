@@ -1,188 +1,262 @@
-const { chromium } = require('playwright');
-const fs = require('fs');
+'use strict';
 
-// Tvůj CJ affiliate base URL pro SuperZoo
-const AFFILIATE_BASE = 'https://www.dpbolvw.net/click-101752886-12607708?url=';
+const { chromium } = require('playwright');
+const { countByCategory, exclusionReason, loadConfig, normalizeRawProduct, parseCliArgs, assertSafeOutputPath, redactDiagnosticText, serializeDiagnosticError, writeJsonAtomic } = require('./lib/safety');
+const { extractProductCards } = require('./lib/page-extractor');
 
 const CATEGORIES = [
-    // Psi
-    { name: 'Granule pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/krmivo-granule/granule/' },
-{ name: 'Veterinární diety pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/granule/veterinarni-diety/' },
-
-    // Kočky
-    { name: 'Granule pro kočky', animalType: 'cat', url: 'https://www.superzoo.cz/kocky/krmivo-a-pamlsky/granule-pro-kocky/' },
-    { name: 'Veterinární diety pro kočky', animalType: 'cat', url: 'https://www.superzoo.cz/kocky/krmivo-a-pamlsky/veterinarni-diety/' },
-
-    // Hlodavci
-    { name: 'Plnohodnotné krmivo pro hlodavce', animalType: 'rodent', url: 'https://www.superzoo.cz/drobni-savci/krmivo-a-doplnky-stravy/plnohodnotne-krmivo/' },
-    { name: 'Krmivo a pamlsky pro hlodavce', animalType: 'rodent', url: 'https://www.superzoo.cz/drobni-savci/krmivo-a-doplnky-stravy/' },
+  { name: 'Granule pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/krmivo-granule/granule/' },
+  { name: 'Veterinární diety pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/granule/veterinarni-diety/' },
+  { name: 'Granule pro kočky', animalType: 'cat', url: 'https://www.superzoo.cz/kocky/krmivo-a-pamlsky/granule-pro-kocky/' },
+  { name: 'Veterinární diety pro kočky', animalType: 'cat', url: 'https://www.superzoo.cz/kocky/krmivo-a-pamlsky/veterinarni-diety/' },
+  { name: 'Plnohodnotné krmivo pro hlodavce', animalType: 'rodent', url: 'https://www.superzoo.cz/drobni-savci/krmivo-a-doplnky-stravy/plnohodnotne-krmivo/' },
+  { name: 'Krmivo a pamlsky pro hlodavce', animalType: 'rodent', url: 'https://www.superzoo.cz/drobni-savci/krmivo-a-doplnky-stravy/' },
 ];
 
-async function scrape() {
-    console.log('🚀 Spouštím SuperZoo scraper...');
+const DEFAULTS = { maxPages: 60, navigationTimeoutMs: 45_000, selectorTimeoutMs: 20_000, paginationTimeoutMs: 20_000, retryAttempts: 3, retryBaseDelayMs: 1_500 };
+const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-    const browser = await chromium.launch({
-        headless: true,
-        args: ['--disable-blink-features=AutomationControlled']
-    });
-
-    const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        viewport: { width: 1920, height: 1080 },
-        locale: 'cs-CZ'
-    });
-
-    await context.addInitScript(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    });
-
-    const page = await context.newPage();
-    const allProducts = [];
-
-    for (const category of CATEGORIES) {
-        console.log(`\n📂 ${category.name} (${category.animalType})`);
-        console.log(`   ${category.url}`);
-
-        try {
-            await page.goto(category.url, {
-                waitUntil: 'networkidle',
-                timeout: 60000
-            });
-
-            console.log('   ⏳ Čekám na produkty...');
-            await page.waitForTimeout(3000);
-
-            // Scrollování pro načtení lazy-load obrázků
-            console.log('   📜 Scrolluji pro obrázky...');
-            await page.evaluate(async () => {
-                await new Promise((resolve) => {
-                    let totalHeight = 0;
-                    const distance = 300;
-                    const timer = setInterval(() => {
-                        const scrollHeight = document.body.scrollHeight;
-                        window.scrollBy(0, distance);
-                        totalHeight += distance;
-                        if (totalHeight >= scrollHeight) {
-                            clearInterval(timer);
-                            resolve();
-                        }
-                    }, 100);
-                });
-            });
-
-            await page.waitForTimeout(5000);
-
-            const products = await page.evaluate((cat) => {
-                const items = [];
-
-                // SuperZoo používá různé selektory — zkusíme více variant
-                const selectors = [
-                    '.product-item',
-                    '.product-list__item',
-                    '[class*="product-item"]',
-                    '[class*="ProductItem"]',
-                    'article',
-                ];
-
-                let elements = [];
-                for (const sel of selectors) {
-                    elements = document.querySelectorAll(sel);
-                    if (elements.length > 0) break;
-                }
-
-                elements.forEach(el => {
-                    // Název
-                    const nameEl = el.querySelector('h2, h3, [class*="name"], [class*="title"], [class*="Name"]');
-                    const name = nameEl?.innerText?.trim();
-
-                    // Cena
-                    const priceEl = el.querySelector('[class*="price"], [class*="Price"], .price');
-                    const price = priceEl?.innerText?.trim();
-
-                    // URL produktu
-                    const linkEl = el.querySelector('a');
-                    const productUrl = linkEl?.href;
-
-                    // Obrázek
-                    let image = null;
-                    const img = el.querySelector('img');
-                    if (img) {
-                        image = img.dataset?.src || img.dataset?.lazySrc || img.src;
-                    }
-                    if (image && (image.includes('data:image') || image.includes('placeholder'))) {
-                        image = null;
-                    }
-
-                    // Filtr: přeskoč pamlsky, seno, doplňky — chceme jen krmivo/granule
-                    const lowerName = (name || '').toLowerCase();
-                    const skip = ['pamlsk', 'seno', 'vitamín', 'doplněk', 'minerál', 'olej', 'pasta', 'losos'];
-                    if (skip.some(s => lowerName.includes(s))) return;
-
-                    if (name && productUrl) {
-                        items.push({
-                            name,
-                            price: price || null,
-                            url: productUrl,
-                            image: image || null,
-                            category: cat.name,
-                            animalType: cat.animalType,
-                            scrapedAt: new Date().toISOString()
-                        });
-                    }
-                });
-
-                return items;
-            }, category);
-
-            // Přidej affiliate URL ke každému produktu
-            const productsWithAffiliate = products.map(p => ({
-                ...p,
-                affiliateUrl: AFFILIATE_BASE + encodeURIComponent(p.url)
-            }));
-
-            console.log(`   ✅ ${productsWithAffiliate.length} produktů`);
-            allProducts.push(...productsWithAffiliate);
-
-            await page.waitForTimeout(3000);
-
-        } catch (err) {
-            console.log(`   ❌ Chyba: ${err.message}`);
-        }
+async function withRetry(operation, options = {}) {
+  const attempts = options.attempts || DEFAULTS.retryAttempts;
+  const baseDelayMs = options.baseDelayMs || DEFAULTS.retryBaseDelayMs;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try { return await operation(attempt); } catch (error) {
+      lastError = error;
+      if (attempt === attempts) break;
+      const waitMs = baseDelayMs * (2 ** (attempt - 1));
+      options.onRetry?.(error, attempt, waitMs);
+      await delay(waitMs);
     }
-
-    await browser.close();
-
-    // Odstraň duplicity podle URL
-    const unique = [];
-    const seen = new Set();
-    for (const p of allProducts) {
-        if (!seen.has(p.url)) {
-            seen.add(p.url);
-            unique.push(p);
-        }
-    }
-
-    const output = {
-        scrapedAt: new Date().toISOString(),
-        source: 'superzoo.cz',
-        affiliate: 'CJ - Mazlíček+',
-        totalProducts: unique.length,
-        products: unique
-    };
-
-    fs.writeFileSync('products.json', JSON.stringify(output, null, 2));
-    console.log(`\n🎉 Hotovo! ${unique.length} unikátních produktů uloženo do products.json`);
-
-    const withImages = unique.filter(p => p.image && p.image.startsWith('http')).length;
-    const byAnimal = {
-        dog: unique.filter(p => p.animalType === 'dog').length,
-        cat: unique.filter(p => p.animalType === 'cat').length,
-        rodent: unique.filter(p => p.animalType === 'rodent').length,
-    };
-    console.log(`📸 Produktů s obrázkem: ${withImages}/${unique.length}`);
-    console.log(`🐕 Psi: ${byAnimal.dog} | 🐈 Kočky: ${byAnimal.cat} | 🐹 Hlodavci: ${byAnimal.rodent}`);
+  }
+  throw lastError;
 }
 
-scrape().catch(err => {
-    console.error('💥 Chyba:', err.message);
-});
+function pageFingerprint(products) { return products.map(product => product.sourceIdentity).sort().join('\n'); }
+function assertPageFingerprintChanged(previous, current, categoryName, pageNumber) {
+  if (previous && previous === current) throw new Error(`Pagination repeated the same product set for ${categoryName} on page ${pageNumber}.`);
+}
+
+function assertPageFingerprintNotSeen(seenFingerprints, current, categoryName, pageNumber) {
+  if (seenFingerprints.has(current)) throw new Error(`Pagination returned a previously processed product set for ${categoryName} on page ${pageNumber}.`);
+}
+
+async function navigateToCategory(page, category, options) {
+  await withRetry(async () => {
+    const response = await page.goto(category.url, { waitUntil: 'domcontentloaded', timeout: options.navigationTimeoutMs });
+    if (!response || !response.ok()) throw new Error(`HTTP navigation failed for ${category.name}: ${response?.status() ?? 'no response'}.`);
+    const host = new URL(response.url()).hostname.toLowerCase();
+    if (!['superzoo.cz', 'www.superzoo.cz'].includes(host)) throw new Error(`Unexpected navigation target for ${category.name}: ${response.url()}`);
+    await page.waitForSelector('.product-item, .product-list__item, [data-testid="product-card"], [data-product-id]', { timeout: options.selectorTimeoutMs });
+  }, { attempts: options.retryAttempts, baseDelayMs: options.retryBaseDelayMs, onRetry: (error, attempt, waitMs) => console.warn(`[retry] ${category.name}, attempt ${attempt}: ${redactDiagnosticText(error)}; waiting ${waitMs} ms`) });
+}
+
+async function closeCookieDialog(page) {
+  try { await page.locator('#cookieConsentModal button, .js-cookie-consent button, [data-testid="cookie-consent"] button').first().click({ timeout: 3_000 }); } catch { /* optional */ }
+}
+
+async function findNextPageControl(page) {
+  const control = page.locator('a, button').filter({ hasText: /Další stránka/i }).first();
+  if (await control.count() === 0 || !(await control.isVisible()) || await control.isDisabled().catch(() => false)) return null;
+  return control;
+}
+
+function canonicalPageUrl(rawUrl) {
+  const parsed = new URL(rawUrl);
+  const hostname = parsed.hostname.toLowerCase();
+  if (!['superzoo.cz', 'www.superzoo.cz'].includes(hostname)) throw new Error(`Unexpected pagination URL host: ${hostname || '(empty)'}`);
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.port) throw new Error('Unsafe pagination URL.');
+  parsed.protocol = 'https:';
+  parsed.hostname = 'www.superzoo.cz';
+  parsed.hash = '';
+  parsed.searchParams.sort();
+  return parsed.toString();
+}
+
+async function readPaginationState(page) {
+  const domFingerprint = await page.evaluate(() => {
+    const selectors = ['.product-item', '.product-list__item', '[data-testid="product-card"]', '[data-product-id]'];
+    let elements = [];
+    for (const selector of selectors) {
+      elements = Array.from(document.querySelectorAll(selector));
+      if (elements.length) break;
+    }
+    return elements.map(element => String(element.dataset?.productId || element.querySelector?.('a')?.href || '')).sort().join('\n');
+  });
+  return { canonicalUrl: canonicalPageUrl(page.url()), domFingerprint };
+}
+
+async function waitForPaginationChange(page, previousState, categoryName, options) {
+  try {
+    await page.waitForFunction(previousFingerprint => {
+      const selectors = ['.product-item', '.product-list__item', '[data-testid="product-card"]', '[data-product-id]'];
+      let elements = [];
+      for (const selector of selectors) {
+        elements = Array.from(document.querySelectorAll(selector));
+        if (elements.length) break;
+      }
+      const current = elements.map(element => String(element.dataset?.productId || element.querySelector?.('a')?.href || '')).sort().join('\n');
+      return Boolean(current && current !== previousFingerprint);
+    }, previousState.domFingerprint, { timeout: options.paginationTimeoutMs, polling: 250 });
+  } catch {
+    throw new Error(`Pagination did not change product content for ${categoryName} within ${options.paginationTimeoutMs} ms.`);
+  }
+  const nextState = await readPaginationState(page);
+  if (!nextState.domFingerprint || nextState.domFingerprint === previousState.domFingerprint) throw new Error(`Pagination repeated the same product content for ${categoryName}.`);
+  return nextState;
+}
+
+async function clickNextIfExpectedState(page, previousState) {
+  return page.evaluate(({ expectedCanonicalUrl, expectedFingerprint }) => {
+    const selectors = ['.product-item', '.product-list__item', '[data-testid="product-card"]', '[data-product-id]'];
+    let elements = [];
+    for (const selector of selectors) {
+      elements = Array.from(document.querySelectorAll(selector));
+      if (elements.length) break;
+    }
+    const domFingerprint = elements.map(element => String(element.dataset?.productId || element.querySelector?.('a')?.href || '')).sort().join('\n');
+    const current = new URL(window.location.href);
+    const safeUrl = ['http:', 'https:'].includes(current.protocol) && ['superzoo.cz', 'www.superzoo.cz'].includes(current.hostname.toLowerCase())
+      && !current.username && !current.password && !current.port;
+    if (!safeUrl) return { status: 'unsafe_url', canonicalUrl: '', domFingerprint };
+    current.protocol = 'https:';
+    current.hostname = 'www.superzoo.cz';
+    current.hash = '';
+    current.searchParams.sort();
+    const canonicalUrl = current.toString();
+    if (domFingerprint !== expectedFingerprint) return { status: 'state_changed', canonicalUrl, domFingerprint };
+    if (canonicalUrl !== expectedCanonicalUrl) return { status: 'url_changed', canonicalUrl, domFingerprint };
+    const control = Array.from(document.querySelectorAll('a, button')).find(element => {
+      const label = String(element.innerText || element.textContent || '');
+      const disabled = element.disabled || element.getAttribute('aria-disabled') === 'true';
+      const visible = Boolean(element.getClientRects().length) && getComputedStyle(element).visibility !== 'hidden';
+      return /Dal\u0161\u00ed str\u00e1nka/iu.test(label) && !disabled && visible;
+    });
+    if (!control) return { status: 'missing_control', canonicalUrl, domFingerprint };
+    control.click();
+    return { status: 'clicked', canonicalUrl, domFingerprint };
+  }, { expectedCanonicalUrl: previousState.canonicalUrl, expectedFingerprint: previousState.domFingerprint });
+}
+
+async function advancePagination(page, categoryName, previousState, options, dependencies = {}) {
+  const attempts = options.paginationRetryAttempts || 2;
+  const readState = dependencies.readState || (() => readPaginationState(page));
+  const waitForChange = dependencies.waitForChange || (() => waitForPaginationChange(page, previousState, categoryName, options));
+  const clickIfExpectedState = dependencies.clickIfExpectedState || (() => clickNextIfExpectedState(page, previousState));
+  const wait = dependencies.delay || delay;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let clickResult;
+    try { clickResult = await clickIfExpectedState(attempt); } catch (error) { lastError = error; }
+    if (clickResult?.status === 'state_changed') return { canonicalUrl: clickResult.canonicalUrl, domFingerprint: clickResult.domFingerprint };
+    if (clickResult?.status === 'url_changed') throw new Error(`Pagination URL changed but product content repeated for ${categoryName}.`);
+    if (clickResult?.status === 'unsafe_url') throw new Error(`Pagination reached an unsafe URL for ${categoryName}.`);
+    if (clickResult?.status === 'missing_control') lastError = new Error(`Pagination control disappeared for ${categoryName}.`);
+    try { return await waitForChange(attempt); } catch (error) { lastError = error; }
+    const after = await readState();
+    if (after.domFingerprint !== previousState.domFingerprint) return after;
+    if (after.canonicalUrl !== previousState.canonicalUrl) throw new Error(`Pagination URL changed but product content repeated for ${categoryName}.`);
+    if (attempt < attempts) await wait(options.retryBaseDelayMs * (2 ** (attempt - 1)));
+  }
+  throw new Error(`Pagination transition failed for ${categoryName} after ${attempts} attempts: ${lastError?.message || 'state did not change'}.`);
+}
+
+function mergeReasonCounts(target, source) {
+  for (const [reason, count] of Object.entries(source || {})) target[reason] = (target[reason] || 0) + count;
+}
+
+async function scrapeCategory(page, category, config, options = DEFAULTS) {
+  await (options.navigateToCategory || navigateToCategory)(page, category, options);
+  await (options.closeCookieDialog || closeCookieDialog)(page);
+  const accepted = [];
+  const stats = { pages: 0, accepted: 0, filteredOutCards: 0, rejectedCards: 0, unparseableCards: 0, rejectedReasons: {}, selectors: [] };
+  const seenFingerprints = new Set();
+
+  for (let pageNumber = 1; pageNumber <= options.maxPages; pageNumber += 1) {
+    const extraction = await page.evaluate(extractProductCards, category);
+    if (extraction.selectorMissing) throw new Error(`Required product selectors are missing for ${category.name} on page ${pageNumber}.`);
+    stats.pages += 1;
+    stats.rejectedCards += extraction.rejectedCards;
+    stats.unparseableCards += extraction.unparseableCards;
+    mergeReasonCounts(stats.rejectedReasons, extraction.rejectedReasons);
+    stats.selectors.push(extraction.selector);
+    if (extraction.products.length === 0) throw new Error(`Category ${category.name} returned zero valid product cards on page ${pageNumber}; reasons=${JSON.stringify(extraction.rejectedReasons)}.`);
+
+    const currentPage = [];
+    for (const extracted of extraction.products) {
+      const normalized = normalizeRawProduct(extracted, config);
+      const reason = exclusionReason(normalized, config);
+      if (reason) { stats.filteredOutCards += 1; stats.rejectedReasons[`filtered_${reason}`] = (stats.rejectedReasons[`filtered_${reason}`] || 0) + 1; continue; }
+      if (!Number.isFinite(normalized.price) || normalized.price <= 0) { stats.rejectedCards += 1; stats.rejectedReasons.invalid_price = (stats.rejectedReasons.invalid_price || 0) + 1; continue; }
+      accepted.push(normalized);
+      currentPage.push(normalized);
+    }
+    if (currentPage.length === 0) throw new Error(`Category ${category.name} produced no in-scope products on page ${pageNumber}.`);
+    const fingerprint = pageFingerprint(currentPage);
+    assertPageFingerprintNotSeen(seenFingerprints, fingerprint, category.name, pageNumber);
+    seenFingerprints.add(fingerprint);
+
+    const nextControl = await (options.findNextPageControl || findNextPageControl)(page);
+    if (!nextControl) break;
+    if (pageNumber === options.maxPages) throw new Error(`Category ${category.name} exceeded the ${options.maxPages}-page safety limit.`);
+    const previousState = { canonicalUrl: canonicalPageUrl(page.url()), domFingerprint: extraction.domFingerprint };
+    await advancePagination(page, category.name, previousState, options);
+  }
+  if (accepted.length === 0) throw new Error(`Required category ${category.name} is empty.`);
+  stats.accepted = accepted.length;
+  stats.selectors = [...new Set(stats.selectors)];
+  return { products: accepted, stats };
+}
+
+async function scrape(options = {}) {
+  const config = loadConfig(options.configPath);
+  const settings = { ...DEFAULTS, ...options };
+  const browserType = options.browserType || chromium;
+  const browser = await browserType.launch({ headless: true, args: ['--disable-blink-features=AutomationControlled'] });
+  try {
+    const context = await browser.newContext({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', viewport: { width: 1920, height: 1080 }, locale: 'cs-CZ' });
+    context.setDefaultTimeout(settings.selectorTimeoutMs);
+    context.setDefaultNavigationTimeout(settings.navigationTimeoutMs);
+    await context.addInitScript(() => { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); });
+    const page = await context.newPage();
+    const products = [];
+    const categoryStats = {};
+    for (const category of options.categories || CATEGORIES) {
+      console.log(`[scrape] required category: ${category.name}`);
+      const result = await (options.scrapeCategoryFunction || scrapeCategory)(page, category, config, settings);
+      categoryStats[category.name] = result.stats;
+      products.push(...result.products);
+    }
+    if (products.length === 0) throw new Error('SuperZoo scrape returned zero products.');
+    const sum = key => Object.values(categoryStats).reduce((total, stats) => total + stats[key], 0);
+    const rejectedReasons = {}; for (const stats of Object.values(categoryStats)) mergeReasonCounts(rejectedReasons, stats.rejectedReasons);
+    return { schemaVersion: 2, scrapedAt: new Date().toISOString(), source: 'superzoo.cz', affiliate: 'CJ - Mazlíček+', reviewOnly: true, totalProducts: products.length, requiredCategories: config.sourcePolicy.requiredCategories, categoryCounts: countByCategory(products), runStats: { rejectedCards: sum('rejectedCards'), unparseableCards: sum('unparseableCards'), filteredOutCards: sum('filteredOutCards'), rejectedReasons, categoryStats }, products };
+  } finally { await browser.close(); }
+}
+
+async function runScraperToFiles({ outputPath, failureReportPath, configPath, scrapeFunction = scrape }) {
+  if (!outputPath || !failureReportPath) throw new Error('Use --output=<staging.json> and --failure-report=<failure.json>.');
+  assertSafeOutputPath(outputPath);
+  assertSafeOutputPath(failureReportPath);
+  try {
+    const result = await scrapeFunction({ configPath });
+    writeJsonAtomic(outputPath, result);
+    console.log(`[scrape] review-only staging output: ${redactDiagnosticText(outputPath)} (${result.totalProducts} products)`);
+  } catch (error) {
+    writeJsonAtomic(failureReportPath, { schemaVersion: 1, status: 'FAIL', stage: 'scrape', generatedAt: new Date().toISOString(), error: serializeDiagnosticError(error) });
+    throw error;
+  }
+}
+
+async function main() {
+  const args = parseCliArgs(process.argv.slice(2));
+  return runScraperToFiles({
+    outputPath: args.output || process.env.SUPERZOO_OUTPUT_PATH,
+    failureReportPath: args['failure-report'] || process.env.SUPERZOO_FAILURE_REPORT_PATH,
+    configPath: args.config,
+  });
+}
+
+if (require.main === module) main().catch(error => { console.error(`[scrape] FAILED: ${redactDiagnosticText(error)}`); process.exitCode = 1; });
+
+module.exports = { CATEGORIES, DEFAULTS, advancePagination, assertPageFingerprintChanged, assertPageFingerprintNotSeen, canonicalPageUrl, clickNextIfExpectedState, pageFingerprint, readPaginationState, runScraperToFiles, scrape, scrapeCategory, waitForPaginationChange, withRetry };

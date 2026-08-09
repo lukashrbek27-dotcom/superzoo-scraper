@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "source": "Mazlíček+ src/data/partner-foods.json",
+    "sourceCatalogSha256": "6dc596ff1c64bab86ec0413bd8d0e5ae28c19681f7537c3435f5f6ac193f8c23",
+    "purpose": "Immutable regression fixture for the three production manualReviewLater records; not a live catalog check."
+  },
+  "products": [
+    {
+      "id": "krmeni-avicentra-osmak-degu-deluxe-500g",
+      "brand": "Avicentra",
+      "name": "Osmák Deluxe -",
+      "size": "500g",
+      "sizeKg": 0.5,
+      "type": "rodent_hay",
+      "species": "Hlodavec",
+      "image": "/data/product-images/krmeni/krmeni-avicentra-osmak-degu-deluxe-500g.jpg",
+      "offers": [
+        {
+          "partner": "Krmeni.cz",
+          "price": 54,
+          "affiliateUrl": "https://ehub.cz/system/scripts/click.php?a_aid=bfc7966a&a_bid=143a2a71&desturl=https%3A%2F%2Fwww.krmeni.cz%2Favicentra-krmiva-hlodavci%2Favicentra-osmak-degu-deluxe"
+        }
+      ],
+      "sku": "1776"
+    },
+    {
+      "id": "krmeni-avicentra-osmak-degu-deluxe-1kg",
+      "brand": "Avicentra",
+      "name": "Osmák Deluxe -",
+      "size": "1kg",
+      "sizeKg": 1,
+      "type": "rodent_hay",
+      "species": "Hlodavec",
+      "image": "/data/product-images/krmeni/krmeni-avicentra-osmak-degu-deluxe-1kg.jpg",
+      "offers": [
+        {
+          "partner": "Krmeni.cz",
+          "price": 97,
+          "affiliateUrl": "https://ehub.cz/system/scripts/click.php?a_aid=bfc7966a&a_bid=143a2a71&desturl=https%3A%2F%2Fwww.krmeni.cz%2Favicentra-krmiva-hlodavci%2Favicentra-osmak-degu-deluxe-1kg-1005550"
+        }
+      ],
+      "sku": "1810"
+    },
+    {
+      "id": "krmeni-avicentra-osmak-degu-deluxe-2x1kg",
+      "brand": "Avicentra",
+      "name": "Osmák Deluxe -",
+      "size": "2kg",
+      "sizeKg": 2,
+      "type": "rodent_hay",
+      "species": "Hlodavec",
+      "image": "https://www.krmeni.cz/media/produkty/k_4000133/4000133.1.jpg",
+      "offers": [
+        {
+          "partner": "Krmeni.cz",
+          "price": 194,
+          "affiliateUrl": "https://ehub.cz/system/scripts/click.php?a_aid=bfc7966a&a_bid=143a2a71&desturl=https%3A%2F%2Fwww.krmeni.cz%2Favicentra-krmiva-hlodavci%2Favicentra-osmak-degu-deluxe-2x1kg"
+        }
+      ],
+      "sku": "2247"
+    }
+  ]
+}

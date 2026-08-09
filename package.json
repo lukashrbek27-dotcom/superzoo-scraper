@@ -4,8 +4,14 @@
   "description": "Scraper krmiv ze SuperZoo.cz pro Mazlíček+",
   "main": "scraper.js",
   "scripts": {
-    "scrape": "node scraper.js",
-    "test": "node inspect.js"
+    "scrape": "node scraper.js --output=review-artifacts/superzoo-raw.json --failure-report=review-artifacts/scrape-failure.json",
+    "scrape:review": "node scraper.js --output=review-artifacts/superzoo-raw.json --failure-report=review-artifacts/scrape-failure.json",
+    "validate:raw": "node validate-raw.js --input=review-artifacts/superzoo-raw.json --report=review-artifacts/raw-validation.json",
+    "convert:review": "node convert-superzoo.js --input=review-artifacts/superzoo-raw.json --output=review-artifacts/superzoo-converted-review.json",
+    "validate:converted": "node validate-converted.js --input=review-artifacts/superzoo-converted-review.json --report=review-artifacts/converted-validation.json",
+    "report:review": "node generate-review-report.js --raw=review-artifacts/raw-validation.json --converted=review-artifacts/converted-validation.json --failure=review-artifacts/scrape-failure.json --output=review-artifacts/validation-summary.md",
+    "verify:baseline": "node prepare-review-snapshot.js --verify-only",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "playwright": "^1.40.0"
