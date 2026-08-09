@@ -2,7 +2,8 @@
 
 const { chromium } = require('playwright');
 const { countByCategory, exclusionReason, loadConfig, normalizeRawProduct, parseCliArgs, assertSafeOutputPath, redactDiagnosticText, serializeDiagnosticError, writeJsonAtomic } = require('./lib/safety');
-const { extractProductCards } = require('./lib/page-extractor');
+const { extractProductCards, productCardDomFingerprint } = require('./lib/page-extractor');
+const PRODUCT_CARD_DOM_FINGERPRINT_SOURCE = productCardDomFingerprint.toString();
 
 const CATEGORIES = [
   { name: 'Granule pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/krmivo-granule/granule/' },
@@ -74,30 +75,17 @@ function canonicalPageUrl(rawUrl) {
 }
 
 async function readPaginationState(page) {
-  const domFingerprint = await page.evaluate(() => {
-    const selectors = ['.product-item', '.product-list__item', '[data-testid="product-card"]', '[data-product-id]'];
-    let elements = [];
-    for (const selector of selectors) {
-      elements = Array.from(document.querySelectorAll(selector));
-      if (elements.length) break;
-    }
-    return elements.map(element => String(element.dataset?.productId || element.querySelector?.('a')?.href || '')).sort().join('\n');
-  });
+  const domFingerprint = await page.evaluate(productCardDomFingerprint);
   return { canonicalUrl: canonicalPageUrl(page.url()), domFingerprint };
 }
 
 async function waitForPaginationChange(page, previousState, categoryName, options) {
   try {
-    await page.waitForFunction(previousFingerprint => {
-      const selectors = ['.product-item', '.product-list__item', '[data-testid="product-card"]', '[data-product-id]'];
-      let elements = [];
-      for (const selector of selectors) {
-        elements = Array.from(document.querySelectorAll(selector));
-        if (elements.length) break;
-      }
-      const current = elements.map(element => String(element.dataset?.productId || element.querySelector?.('a')?.href || '')).sort().join('\n');
+    await page.waitForFunction(({ previousFingerprint, fingerprintSource }) => {
+      const fingerprint = Function(`return (${fingerprintSource});`)();
+      const current = fingerprint();
       return Boolean(current && current !== previousFingerprint);
-    }, previousState.domFingerprint, { timeout: options.paginationTimeoutMs, polling: 250 });
+    }, { previousFingerprint: previousState.domFingerprint, fingerprintSource: PRODUCT_CARD_DOM_FINGERPRINT_SOURCE }, { timeout: options.paginationTimeoutMs, polling: 250 });
   } catch {
     throw new Error(`Pagination did not change product content for ${categoryName} within ${options.paginationTimeoutMs} ms.`);
   }
@@ -107,14 +95,9 @@ async function waitForPaginationChange(page, previousState, categoryName, option
 }
 
 async function clickNextIfExpectedState(page, previousState) {
-  return page.evaluate(({ expectedCanonicalUrl, expectedFingerprint }) => {
-    const selectors = ['.product-item', '.product-list__item', '[data-testid="product-card"]', '[data-product-id]'];
-    let elements = [];
-    for (const selector of selectors) {
-      elements = Array.from(document.querySelectorAll(selector));
-      if (elements.length) break;
-    }
-    const domFingerprint = elements.map(element => String(element.dataset?.productId || element.querySelector?.('a')?.href || '')).sort().join('\n');
+  return page.evaluate(({ expectedCanonicalUrl, expectedFingerprint, fingerprintSource }) => {
+    const fingerprint = Function(`return (${fingerprintSource});`)();
+    const domFingerprint = fingerprint();
     const current = new URL(window.location.href);
     const safeUrl = ['http:', 'https:'].includes(current.protocol) && ['superzoo.cz', 'www.superzoo.cz'].includes(current.hostname.toLowerCase())
       && !current.username && !current.password && !current.port;
@@ -135,7 +118,7 @@ async function clickNextIfExpectedState(page, previousState) {
     if (!control) return { status: 'missing_control', canonicalUrl, domFingerprint };
     control.click();
     return { status: 'clicked', canonicalUrl, domFingerprint };
-  }, { expectedCanonicalUrl: previousState.canonicalUrl, expectedFingerprint: previousState.domFingerprint });
+  }, { expectedCanonicalUrl: previousState.canonicalUrl, expectedFingerprint: previousState.domFingerprint, fingerprintSource: PRODUCT_CARD_DOM_FINGERPRINT_SOURCE });
 }
 
 async function advancePagination(page, categoryName, previousState, options, dependencies = {}) {

@@ -9,7 +9,7 @@ const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 const { chromium } = require('playwright');
 const { convertDocument, convertProduct } = require('../convert-superzoo');
-const { extractProductCards } = require('../lib/page-extractor');
+const { extractProductCards, productCardDomFingerprint } = require('../lib/page-extractor');
 const {
   CJ_AFFILIATE_PREFIX,
   assertSafeOutputPath,
@@ -27,7 +27,7 @@ const {
   validateAffiliateUrlDetailed,
 } = require('../lib/safety');
 const { verifyPinnedBaseline } = require('../prepare-review-snapshot');
-const { advancePagination, assertPageFingerprintNotSeen, runScraperToFiles, scrape, scrapeCategory } = require('../scraper');
+const { advancePagination, assertPageFingerprintNotSeen, clickNextIfExpectedState, readPaginationState, runScraperToFiles, scrape, scrapeCategory } = require('../scraper');
 const { validateConvertedProducts } = require('../validate-converted');
 const { validateConfigContract, validateRawDocument } = require('../validate-raw');
 
@@ -53,6 +53,13 @@ async function offlinePage() {
     browserNetwork.blocked += 1;
     return route.abort('blockedbyclient');
   });
+  return page;
+}
+
+async function paginationFixturePage(html) {
+  const page = await browser.newPage();
+  await page.route('https://www.superzoo.cz/pagination-fixture', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: html }));
+  await page.goto('https://www.superzoo.cz/pagination-fixture');
   return page;
 }
 
@@ -154,6 +161,48 @@ test('browser context blocks every request and uses the production page.evaluate
     assert.equal(result.products[0].sourceProductId, 'SKU-12345');
     assert.equal(result.products[0].salePrice, '399 Kč');
     assert.equal(result.products[0].originalPrice, '499 Kč');
+  } finally { await page.close(); }
+});
+
+test('pagination DOM fingerprint is identical across extractor, expected-state click, and state read for stable, linked, and anonymous cards', async () => {
+  const html = '<div class="product-item" data-product-id="stable-id"></div><div class="product-item"><a href="/linked-product/">Linked</a></div><div class="product-item"></div><div class="product-item"></div><button>Další stránka</button>';
+  const page = await paginationFixturePage(html);
+  try {
+    const extraction = await page.evaluate(extractProductCards, category);
+    const state = await readPaginationState(page);
+    const click = await clickNextIfExpectedState(page, { canonicalUrl: state.canonicalUrl, domFingerprint: extraction.domFingerprint });
+    assert.equal(extraction.domFingerprint, state.domFingerprint);
+    assert.equal(click.status, 'clicked');
+    assert.equal(click.domFingerprint, extraction.domFingerprint);
+    assert.match(extraction.domFingerprint, /unidentified-2/);
+    assert.match(extraction.domFingerprint, /unidentified-3/);
+  } finally { await page.close(); }
+});
+
+test('pagination DOM fingerprint distinguishes different card sets and keeps anonymous fallbacks deterministic', async () => {
+  const page = await paginationFixturePage('<div class="product-item"></div><div class="product-item"></div>');
+  try {
+    const first = await page.evaluate(productCardDomFingerprint);
+    const repeated = await page.evaluate(productCardDomFingerprint);
+    await page.setContent('<div class="product-item"></div><div class="product-item" data-product-id="changed-id"></div>');
+    const changed = await page.evaluate(productCardDomFingerprint);
+    assert.equal(first, repeated);
+    assert.notEqual(first, changed);
+    assert.match(first, /unidentified-0/);
+    assert.match(first, /unidentified-1/);
+  } finally { await page.close(); }
+});
+
+test('pagination click permits an unchanged DOM and detects a real post-click product change', async () => {
+  const html = '<div class="product-item" data-product-id="before"></div><button onclick="document.querySelector(\'.product-item\').dataset.productId=\'after\'">Další stránka</button>';
+  const page = await paginationFixturePage(html);
+  try {
+    const before = await readPaginationState(page);
+    const click = await clickNextIfExpectedState(page, before);
+    const after = await readPaginationState(page);
+    assert.equal(click.status, 'clicked');
+    assert.equal(click.domFingerprint, before.domFingerprint);
+    assert.notEqual(after.domFingerprint, before.domFingerprint);
   } finally { await page.close(); }
 });
 
