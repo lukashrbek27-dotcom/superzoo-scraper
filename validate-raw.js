@@ -1,6 +1,7 @@
 'use strict';
 
 const { assertSafeOutputPath, buildIdentity, canonicalizeProductUrl, countByCategory, exclusionReason, loadConfig, normalizeRawProduct, parseCliArgs, readJson, redactDiagnosticText, writeJson } = require('./lib/safety');
+const { classifyNormalizedProducts } = require('./lib/cross-category-dedupe');
 
 function issue(collection, code, message, productIndex = null, identity = null) { collection.push({ code, message: redactDiagnosticText(message), productIndex, identity: identity == null ? null : redactDiagnosticText(identity) }); }
 function sumCounts(counts) { return Object.values(counts || {}).reduce((sum, value) => sum + Number(value || 0), 0); }
@@ -56,10 +57,6 @@ function validateRawDocument(document, config, options = {}) {
   if (!document?.runStats || typeof document.runStats !== 'object') issue(errors, 'missing_run_stats', 'Raw output must contain runStats.');
 
   const normalized = [];
-  const sourceSeen = new Map();
-  const canonicalSeen = new Map();
-  const duplicateSources = [];
-  const duplicateCanonicals = [];
   for (const [index, product] of products.entries()) {
     validateAvailability(product?.availability, errors, index);
     let current;
@@ -74,15 +71,13 @@ function validateRawDocument(document, config, options = {}) {
     const excluded = exclusionReason(current, config);
     if (excluded) issue(errors, 'out_of_scope_product', `Out-of-scope product reached raw output (${excluded}): ${current.name}.`, index, current.canonicalUrl);
 
-    if (sourceSeen.has(current.sourceIdentity)) {
-      const diagnostic = { identity: redactDiagnosticText(current.sourceIdentity), firstIndex: sourceSeen.get(current.sourceIdentity), duplicateIndex: index };
-      duplicateSources.push(diagnostic); issue(errors, 'duplicate_source_identity', `Duplicate source identity at indexes ${diagnostic.firstIndex} and ${index}.`, index, current.sourceIdentity);
-    } else sourceSeen.set(current.sourceIdentity, index);
-    if (canonicalSeen.has(current.canonicalIdentity)) {
-      const diagnostic = { identity: redactDiagnosticText(current.canonicalIdentity), firstIndex: canonicalSeen.get(current.canonicalIdentity), duplicateIndex: index };
-      duplicateCanonicals.push(diagnostic); issue(errors, 'duplicate_canonical_identity', `Duplicate canonical identity at indexes ${diagnostic.firstIndex} and ${index}.`, index, current.canonicalIdentity);
-    } else canonicalSeen.set(current.canonicalIdentity, index);
   }
+
+  const duplicateClassification = classifyNormalizedProducts(normalized);
+  for (const conflict of duplicateClassification.conflicts) {
+    issue(errors, conflict.code, `${conflict.code}: categories=${conflict.categories.join(', ')}; differingFields=${conflict.differingFields.join(', ') || 'none'}.`, conflict.indexes[0], conflict.identity);
+  }
+  const legitimateDuplicateRows = duplicateClassification.legitimateClusters.reduce((total, cluster) => total + cluster.entries.length, 0);
 
   const categoryCounts = countByCategory(normalized);
   for (const category of config.sourcePolicy.requiredCategories) {
@@ -108,14 +103,11 @@ function validateRawDocument(document, config, options = {}) {
   if (!Number.isFinite(unparseableCards) || unparseableCards < 0) issue(errors, 'invalid_unparseable_count', 'unparseableCards must be a non-negative number.');
   else if (unparseableCards > config.thresholds.maximumUnparseableCards) issue(errors, 'too_many_unparseable_cards', `${unparseableCards} unparseable cards, maximum ${config.thresholds.maximumUnparseableCards}.`);
   if ((rejectedCards > 0 || unparseableCards > 0) && (!document?.runStats?.rejectedReasons || Object.keys(document.runStats.rejectedReasons).length === 0)) issue(errors, 'missing_rejected_reasons', 'Rejected/unparseable cards require concrete rejectedReasons.');
-  if (duplicateSources.length > config.thresholds.maximumDuplicateSourceIdentities) issue(errors, 'duplicate_source_threshold', `${duplicateSources.length} duplicate source identities, maximum 0.`);
-  if (duplicateCanonicals.length > config.thresholds.maximumDuplicateCanonicalIdentities) issue(errors, 'duplicate_canonical_threshold', `${duplicateCanonicals.length} duplicate canonical identities, maximum 0.`);
-
   return {
     schemaVersion: 1, validator: 'superzoo-raw', generatedAt: new Date().toISOString(), passed: errors.length === 0,
     baselineContract: { kind: config.baselineContract.kind, artifactPath: config.baselineContract.artifactPath, comparatorProducts: comparatorCount, sourceLegacySha256: config.baselineContract.expectedSha256 },
-    summary: { products: normalized.length, comparatorProducts: comparatorCount, dropPercent, rejectedCards, unparseableCards, filteredOutCards: Number(document?.runStats?.filteredOutCards || 0), duplicateSourceIdentities: duplicateSources.length, duplicateCanonicalIdentities: duplicateCanonicals.length, outOfScopeProducts: errors.filter(item => item.code === 'out_of_scope_product').length, categoryCounts },
-    diagnostics: { duplicateSourceIdentities: duplicateSources, duplicateCanonicalIdentities: duplicateCanonicals, rejectedReasons: document?.runStats?.rejectedReasons || {} },
+    summary: { products: normalized.length, comparatorProducts: comparatorCount, dropPercent, rejectedCards, unparseableCards, filteredOutCards: Number(document?.runStats?.filteredOutCards || 0), legitimateCrossCategoryDuplicateClusters: duplicateClassification.legitimateClusters.length, legitimateCrossCategoryDuplicateRows: legitimateDuplicateRows, duplicateSourceIdentities: duplicateClassification.conflicts.filter(conflict => conflict.code === 'duplicate_within_category').length, duplicateCanonicalIdentities: duplicateClassification.conflicts.filter(conflict => conflict.code === 'identity_collision').length, outOfScopeProducts: errors.filter(item => item.code === 'out_of_scope_product').length, categoryCounts },
+    diagnostics: { legitimateCrossCategoryDuplicates: duplicateClassification.legitimateClusters.map(cluster => ({ identity: redactDiagnosticText(cluster.identity), categories: cluster.categories, indexes: cluster.entries.map(entry => entry.index) })), duplicateConflicts: duplicateClassification.conflicts.map(conflict => ({ ...conflict, identity: redactDiagnosticText(conflict.identity) })), rejectedReasons: document?.runStats?.rejectedReasons || {} },
     errors, warnings, inputPath: options.inputPath,
   };
 }

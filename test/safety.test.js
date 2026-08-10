@@ -262,23 +262,23 @@ test('textually unparseable price flows from page.evaluate through runStats into
   } finally { await page.close(); }
 });
 
-test('duplicate source identity across categories is blocking and diagnosed', () => {
+test('source identity collision across categories remains blocking and diagnosed', () => {
   const second = 'Veterinární diety pro psy';
   const cfg = testConfig([category.name, second], 2);
   const products = [raw({ sourceProductId: 'same', url: 'https://www.superzoo.cz/a/' }), raw({ sourceProductId: 'same', url: 'https://www.superzoo.cz/b/', category: second })];
   const report = validateRawDocument(rawDocument(products, cfg), cfg);
-  assert.equal(report.summary.duplicateSourceIdentities, 1);
-  assert.equal(report.diagnostics.duplicateSourceIdentities[0].identity, 'superzoo-product:same');
-  assert.ok(report.errors.some(error => error.code === 'duplicate_source_threshold'));
+  assert.equal(report.summary.duplicateCanonicalIdentities, 1);
+  assert.equal(report.diagnostics.duplicateConflicts[0].identity, 'superzoo-product:same');
+  assert.ok(report.errors.some(error => error.code === 'identity_collision'));
 });
 
-test('duplicate canonical identity across categories is blocking and diagnosed', () => {
+test('canonical identity collision across categories is blocking and diagnosed', () => {
   const second = 'Veterinární diety pro psy';
   const cfg = testConfig([category.name, second], 2);
   const products = [raw({ sourceProductId: 'one' }), raw({ sourceProductId: 'two', category: second })];
   const report = validateRawDocument(rawDocument(products, cfg), cfg);
   assert.equal(report.summary.duplicateCanonicalIdentities, 1);
-  assert.ok(report.errors.some(error => error.code === 'duplicate_canonical_threshold'));
+  assert.ok(report.errors.some(error => error.code === 'identity_collision'));
 });
 
 test('zero and negative current prices fail', () => {

@@ -1,6 +1,7 @@
 'use strict';
 
 const { assertSafeOutputPath, buildIdentity, exclusionReason, loadConfig, normalizeRawProduct, normalizeText, parseCliArgs, readJson, redactDiagnosticText, writeJsonAtomic } = require('./lib/safety');
+const { canonicalizeCrossCategoryProducts } = require('./lib/cross-category-dedupe');
 
 const KNOWN_BRANDS = ['Brit Premium by Nature', 'Brit Care', 'Brit', "Hill's Prescription Diet", "Hill's", 'Royal Canin', 'Rasco Premium', 'Rasco', 'Carnilove', 'Applaws', 'Kattovit', 'Kitekat', 'AVICENTRA', 'Versele-Laga', 'Nature Land', 'VITAKRAFT', 'Ontario', 'Acana', 'Orijen', 'Calibra', 'Purina', 'Whiskas', 'Felix', 'Friskies', 'Iams', 'Eukanuba', 'Beaphar', 'Nutrin', 'Apetit', 'Josera', 'Animonda', 'Bozita', 'Savita', 'Monge', 'Trainer', 'Farmina', 'N&D', 'N & D', 'Pro Plan', 'Proplan', 'Taste of the Wild', 'Sanabelle', 'Smolke'];
 function parseBrand(product) {
@@ -36,13 +37,19 @@ function convertProduct(product, config) {
 }
 function convertDocument(document, config) {
   if (!document || !Array.isArray(document.products) || document.products.length === 0) throw new Error('Input must contain a non-empty products array.');
-  const sourceSeen = new Set(); const canonicalSeen = new Set(); const ids = new Set(); const output = [];
-  for (const rawInput of document.products) {
-    const raw = normalizeRawProduct(rawInput, config);
-    if (sourceSeen.has(raw.sourceIdentity)) throw new Error(`Duplicate source identity: ${raw.sourceIdentity}`);
-    if (canonicalSeen.has(raw.canonicalIdentity)) throw new Error(`Duplicate canonical identity: ${raw.canonicalIdentity}`);
-    sourceSeen.add(raw.sourceIdentity); canonicalSeen.add(raw.canonicalIdentity);
-    const product = convertProduct(raw, config);
+  const ids = new Set(); const output = [];
+  for (const group of canonicalizeCrossCategoryProducts(document.products, config)) {
+    const converted = group.sourceIndexes.map(index => convertProduct(document.products[index], config));
+    const product = converted[0];
+    const comparable = candidate => JSON.stringify({ ...candidate, dietTags: undefined });
+    if (converted.some(candidate => comparable(candidate) !== comparable(product))) {
+      const error = new Error(`category_conversion_semantics_conflict: ${group.product.sourceIdentity}; categories=${group.sourceCategories.join(', ')}.`);
+      error.code = 'category_conversion_semantics_conflict';
+      throw error;
+    }
+    const dietTags = [...new Set(converted.flatMap(candidate => candidate.dietTags || []))].sort();
+    if (dietTags.length) product.dietTags = dietTags;
+    else delete product.dietTags;
     if (ids.has(product.id)) throw new Error(`Converted product ID collision: ${product.id}`);
     ids.add(product.id); output.push(product);
   }
