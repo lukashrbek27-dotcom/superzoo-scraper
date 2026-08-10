@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 const { chromium } = require('playwright');
-const { canonicalizeProductUrl, countByCategory, exclusionReason, inferSize, loadConfig, normalizeRawProduct, parseCliArgs, assertSafeOutputPath, redactDiagnosticText, serializeDiagnosticError, writeJsonAtomic } = require('./lib/safety');
+const { canonicalizeProductUrl, countByCategory, exclusionDecision, exclusionReason, inferSize, loadConfig, normalizeRawProduct, parseCliArgs, assertSafeOutputPath, redactDiagnosticText, serializeDiagnosticError, writeJsonAtomic } = require('./lib/safety');
 const { extractProductCards, productCardDomFingerprint } = require('./lib/page-extractor');
 const PRODUCT_CARD_DOM_FINGERPRINT_SOURCE = productCardDomFingerprint.toString();
 
@@ -190,8 +190,8 @@ function rejectedDiagnostic(detail, category, pageIndex, selector, config) {
   const size = inferSize(detail.name || '');
   return { category: category.name, pageIndex, reason: detail.reason, sourceProductId: detail.sourceProductId || null, canonicalUrl: safeDiagnosticUrl(detail.url, config), name: detail.name || null, image: detail.image || null, price: detail.price || null, size: size.size || null, brand: null, cardSelector: selector, cardIndex: detail.cardIndex };
 }
-function filteredDiagnostic(product, reason, category, pageIndex, cardIndex) {
-  return { category: category.name, pageIndex, filterType: reason, exclusionRuleId: reason === 'stable_source_url' ? product.canonicalUrl : null, sourceProductId: product.sourceProductId || null, canonicalUrl: product.canonicalUrl, name: product.name || null, cardIndex };
+function filteredDiagnostic(product, decision, category, pageIndex, cardIndex) {
+  return { category: category.name, pageIndex, filterType: decision.reason, exclusionRuleId: decision.ruleId || (decision.reason === 'stable_source_url' ? product.canonicalUrl : null), reasonCode: decision.reasonCode || null, evidence: decision.evidence || null, sourceIdentity: product.sourceIdentity || null, canonicalIdentity: product.canonicalIdentity || null, sourceProductId: product.sourceProductId || null, canonicalUrl: product.canonicalUrl, name: product.name || null, cardIndex };
 }
 function createReviewSidecar(raw, sidecar) {
   const sourceGroups = new Map();
@@ -236,12 +236,13 @@ async function scrapeCategory(page, category, config, options = DEFAULTS) {
     let filteredCount = 0;
     for (const [cardIndex, extracted] of extraction.products.entries()) {
       const normalized = normalizeRawProduct(extracted, config);
-      const reason = exclusionReason(normalized, config);
+      const decision = exclusionDecision(normalized, config, { mainFoodScope: true });
+      const reason = decision?.reason || exclusionReason(normalized, config);
       if (reason) {
         stats.filteredOutCards += 1; filteredCount += 1;
         stats.rejectedReasons[`filtered_${reason}`] = (stats.rejectedReasons[`filtered_${reason}`] || 0) + 1;
         if (options.reviewSidecar) {
-          const record = filteredDiagnostic(normalized, reason, category, pageIndex, cardIndex);
+          const record = filteredDiagnostic(normalized, decision, category, pageIndex, cardIndex);
           options.reviewSidecar.filteredCards.push(record);
           incrementCount(options.reviewSidecar.filteredByType, reason);
           incrementCount(options.reviewSidecar.filteredByCategory, category.name);

@@ -67,7 +67,23 @@
       "kitty\\s+milk",
       "sušen[ée]\\s+ml[ée]ko"
     ],
-    "forbiddenCategoryPatterns": ["seno", "hay"]
+    "forbiddenCategoryPatterns": ["seno", "hay"],
+    "mainFoodScopeRules": [
+      { "ruleId": "R001", "reasonCode": "advent_calendar_or_seasonal_gift", "animalTypes": ["dog", "cat", "rodent"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["adventni kalendar", "advent calendar"] },
+      { "ruleId": "R002", "reasonCode": "water_or_beverage", "animalTypes": ["dog", "cat", "rodent"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["aqua drink", "\\bdrink\\b", "\\bvoda\\b", "\\bwater\\b", "napoj"] },
+      { "ruleId": "R003", "reasonCode": "sample_test_or_taster_pack", "animalTypes": ["dog", "cat", "rodent"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["\\bvzorek\\b", "\\bsample\\b", "\\btester\\b", "testovaci", "ochutnav"] },
+      { "ruleId": "R004", "reasonCode": "wet_food", "animalTypes": ["dog", "cat"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["kapsick", "pouch", "konzerv", "pastet", "mousse", "wet food"] },
+      { "ruleId": "R005", "reasonCode": "topper_broth_or_soup", "animalTypes": ["dog", "cat"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["topper", "vyvar", "broth", "soup", "polev"] },
+      { "ruleId": "R006", "reasonCode": "milk_or_milk_replacer", "animalTypes": ["dog", "cat", "rodent"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["mleko", "milk", "lactol"] },
+      { "ruleId": "R007", "reasonCode": "hay", "animalTypes": ["rodent"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["\\bseno\\b", "\\bhay\\b"] },
+      { "ruleId": "R008", "reasonCode": "vitamin_mineral_or_health_supplement", "animalTypes": ["dog", "cat", "rodent"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["vitamin", "mineral", "\\bsul\\b", "calcium", "tablet", "kapky", "detox", "immunity", "enterozoo"] },
+      { "ruleId": "R009", "reasonCode": "oil_paste_or_syrup", "animalTypes": ["dog", "cat", "rodent"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["olej", "\\boil\\b", "pasta", "paste", "sirup", "syrup", "\\bgel\\b"] },
+      { "ruleId": "R010", "reasonCode": "treat_or_reward", "animalTypes": ["dog", "cat", "rodent"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["pamlsek", "pochoutka", "treat", "snack", "reward", "drops", "tycink", "kracker", "cracker", "crock", "brunch", "susenk", "chipsy", "rolls", "mlsoun", "krouzk", "koleck", "vlocky", "popcorn", "loftys"] },
+      { "ruleId": "R011", "reasonCode": "herb_fruit_vegetable_or_side_feed", "animalTypes": ["rodent"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["bylink", "botanical", "ovoce", "ovocn", "zelenin", "mrkev", "petrzel", "slunecnic", "vojtesk", "banan", "jablk", "hras", "kukuric", "spenat", "chleb", "svatojansk", "moucny cerv"] },
+      { "ruleId": "R012", "reasonCode": "accessory_or_non_food", "animalTypes": ["dog", "cat", "rodent"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["tunel", "miska", "drzak", "dreven", "\\bkolo\\b", "valec"] },
+      { "ruleId": "R013", "reasonCode": "wrong_or_unsupported_species", "animalTypes": ["rodent"], "fields": ["name", "category", "canonicalUrl"], "patterns": ["fretk", "ferret", "veverk", "squirrel"] },
+      { "ruleId": "R017", "reasonCode": "supplementary_feed", "animalTypes": ["rodent"], "fields": ["canonicalUrl"], "patterns": ["^https www superzoo cz acidomid k kralici"] }
+    ]
   },
   "catalogExclusionContract": {
     "activeExclusionCount": 35,

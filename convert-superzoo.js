@@ -1,6 +1,6 @@
 'use strict';
 
-const { assertSafeOutputPath, buildIdentity, exclusionReason, loadConfig, normalizeRawProduct, normalizeText, parseCliArgs, readJson, redactDiagnosticText, writeJsonAtomic } = require('./lib/safety');
+const { assertSafeOutputPath, buildIdentity, exclusionDecision, exclusionReason, loadConfig, normalizeRawProduct, normalizeText, parseCliArgs, readJson, redactDiagnosticText, writeJsonAtomic } = require('./lib/safety');
 const { canonicalizeCrossCategoryProducts } = require('./lib/cross-category-dedupe');
 
 const KNOWN_BRANDS = ['Brit Premium by Nature', 'Brit Care', 'Brit', "Hill's Prescription Diet", "Hill's", 'Royal Canin', 'Rasco Premium', 'Rasco', 'Carnilove', 'Applaws', 'Kattovit', 'Kitekat', 'AVICENTRA', 'Versele-Laga', 'Nature Land', 'VITAKRAFT', 'Ontario', 'Acana', 'Orijen', 'Calibra', 'Purina', 'Whiskas', 'Felix', 'Friskies', 'Iams', 'Eukanuba', 'Beaphar', 'Nutrin', 'Apetit', 'Josera', 'Animonda', 'Bozita', 'Savita', 'Monge', 'Trainer', 'Farmina', 'N&D', 'N & D', 'Pro Plan', 'Proplan', 'Taste of the Wild', 'Sanabelle', 'Smolke'];
@@ -26,6 +26,12 @@ function cleanName(name, brand) {
   const escaped = brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return String(name).replace(new RegExp(`^${escaped}\\s*`, 'iu'), '').replace(/\s+\d+\s*[x×]\s*\d+(?:[,.]\d+)?\s*(?:kg|g)\b.*$/iu, '').replace(/\s+\d+(?:[,.]\d+)?\s*(?:kg|g)\b.*$/iu, '').trim().replace(/^[-–,\s]+|[-–,\s]+$/g, '') || String(name).trim();
 }
+function scopeReject(product, config, options = {}) {
+  const raw = normalizeRawProduct(product, config);
+  const decision = exclusionDecision(raw, config, { mainFoodScope: options.mainFoodScope === true, scopeBeforeLegacy: true });
+  if (!decision || decision.reason !== 'main_food_scope') return null;
+  return { ...decision, reviewIdentity: buildIdentity(raw, config).productId, name: raw.name, animalType: raw.animalType, category: raw.category, price: raw.price, size: raw.size, sizeKg: raw.sizeKg, url: raw.canonicalUrl };
+}
 function convertProduct(product, config) {
   const raw = normalizeRawProduct(product, config);
   const blocked = exclusionReason(raw, config); if (blocked) throw new Error(`Out-of-scope product cannot be converted (${blocked}): ${raw.name}`);
@@ -35,10 +41,12 @@ function convertProduct(product, config) {
   if (/veterinar|veterinary|prescription/.test(normalizeText(`${raw.category} ${raw.name}`))) converted.dietTags = ['veterinary'];
   return converted;
 }
-function convertDocument(document, config) {
+function convertDocument(document, config, options = {}) {
   if (!document || !Array.isArray(document.products) || document.products.length === 0) throw new Error('Input must contain a non-empty products array.');
   const ids = new Set(); const output = [];
   for (const group of canonicalizeCrossCategoryProducts(document.products, config)) {
+    const rejected = group.sourceIndexes.map(index => scopeReject(document.products[index], config, options)).filter(Boolean);
+    if (rejected.length) continue;
     const converted = group.sourceIndexes.map(index => convertProduct(document.products[index], config));
     const product = converted[0];
     const comparable = candidate => JSON.stringify({ ...candidate, dietTags: undefined });
@@ -55,10 +63,20 @@ function convertDocument(document, config) {
   }
   return output;
 }
+function collectScopeRejects(document, config, options = {}) {
+  const rejects = [];
+  for (const group of canonicalizeCrossCategoryProducts(document.products, config)) {
+    const entries = group.sourceIndexes.map(index => scopeReject(document.products[index], config, options)).filter(Boolean);
+    if (entries.length) rejects.push(entries[0]);
+  }
+  return rejects;
+}
 function main() {
   const args = parseCliArgs(process.argv.slice(2)); const input = args.input || process.env.SUPERZOO_CONVERTER_INPUT; const output = args.output || process.env.SUPERZOO_CONVERTER_OUTPUT;
   if (!input || !output) throw new Error('Use --input=<staging-raw.json> and --output=<staging-converted.json>.');
-  assertSafeOutputPath(output); const products = convertDocument(readJson(input), loadConfig(args.config)); writeJsonAtomic(output, products); console.log(`[convert] review-only output: ${redactDiagnosticText(output)} (${products.length} products)`);
+  assertSafeOutputPath(output); const document = readJson(input); const config = loadConfig(args.config); const options = { mainFoodScope: args['main-food-scope-guard'] === true }; const products = convertDocument(document, config, options); writeJsonAtomic(output, products);
+  if (args['scope-reject-report']) { assertSafeOutputPath(args['scope-reject-report']); writeJsonAtomic(args['scope-reject-report'], { schemaVersion: 1, source: 'superzoo.cz', reviewOnly: true, input: input, scopeRejects: collectScopeRejects(document, config, options) }); }
+  console.log(`[convert] review-only output: ${redactDiagnosticText(output)} (${products.length} products)`);
 }
 if (require.main === module) { try { main(); } catch (error) { console.error(`[convert] FAILED: ${redactDiagnosticText(error)}`); process.exitCode = 1; } }
-module.exports = { cleanName, convertDocument, convertProduct, mapSpecies, mapType, parseBrand };
+module.exports = { cleanName, collectScopeRejects, convertDocument, convertProduct, mapSpecies, mapType, parseBrand, scopeReject };

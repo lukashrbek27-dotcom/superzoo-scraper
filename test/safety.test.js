@@ -8,7 +8,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 const { chromium } = require('playwright');
-const { convertDocument, convertProduct } = require('../convert-superzoo');
+const { collectScopeRejects, convertDocument, convertProduct } = require('../convert-superzoo');
 const { extractProductCards, productCardDomFingerprint } = require('../lib/page-extractor');
 const {
   CJ_AFFILIATE_PREFIX,
@@ -17,6 +17,7 @@ const {
   buildIdentity,
   canonicalizeProductUrl,
   exclusionReason,
+  exclusionDecision,
   loadConfig,
   normalizeRawProduct,
   redactDiagnosticText,
@@ -307,6 +308,51 @@ test('URL identity prevents the old brand-name-size collision', () => {
 
 test('hay and other named out-of-scope products are rejected', () => {
   assert.throws(() => convertProduct(raw({ name: 'Seno luční 1 kg', url: 'https://www.superzoo.cz/other-hay/', category: 'Krmivo a pamlsky pro hlodavce', animalType: 'rodent' }), config), /out-of-scope/i);
+});
+
+test('main-food scope rules R001-R013 and R017 reject only their explicit audited forms', () => {
+  const cases = [
+    ['R001', 'Adventni kalendar Nature Land 100g', 'rodent'],
+    ['R002', 'Aqua Drink Vitakraft 500ml', 'rodent'],
+    ['R003', 'Vzorek Complete Food 100g', 'dog'],
+    ['R004', 'Cat pouch complete 85g', 'cat'],
+    ['R005', 'Chicken broth topper 100ml', 'dog'],
+    ['R006', 'Puppy milk replacer 250g', 'dog'],
+    ['R007', 'Hay meadow 1kg', 'rodent'],
+    ['R008', 'Vitamin C tablet 50g', 'rodent'],
+    ['R009', 'Salmon oil 100ml', 'dog'],
+    ['R010', 'Rabbit treat snack 50g', 'rodent'],
+    ['R011', 'Rodent botanical herbs 50g', 'rodent'],
+    ['R012', 'Rodent dreveny tunnel 100g', 'rodent'],
+    ['R013', 'Ferret complete pellets 1kg', 'rodent'],
+    ['R017', 'Acidomid K kralici 1l', 'rodent', 'https://www.superzoo.cz/acidomid-k-kralici-1l/'],
+  ];
+  for (const [ruleId, name, animalType, url] of cases) {
+    const decision = exclusionDecision(raw({ name, animalType, category: animalType === 'rodent' ? 'Krmivo a pamlsky pro hlodavce' : category.name, url: url || `https://www.superzoo.cz/${ruleId.toLowerCase()}-fixture/` }), config, { mainFoodScope: true, scopeBeforeLegacy: true });
+    assert.equal(decision.ruleId, ruleId, `${ruleId}: ${JSON.stringify(decision)}`);
+    assert.equal(decision.reason, 'main_food_scope');
+    assert.ok(decision.reasonCode);
+    assert.ok(decision.evidence);
+  }
+  for (const product of [
+    raw({ name: 'Complete veterinary dry food mini 100g', category: 'Veterinární diety pro psy', animalType: 'dog' }),
+    raw({ name: 'Complete rodent pellets 100g', category: 'Plnohodnotné krmivo pro hlodavce', animalType: 'rodent' }),
+    raw({ name: 'Manual followup mixed rodent food 100g', category: 'Krmivo a pamlsky pro hlodavce', animalType: 'rodent' }),
+  ]) assert.equal(exclusionDecision(product, config, { mainFoodScope: true, scopeBeforeLegacy: true }), null);
+});
+
+test('audited drinks, samples, and scope rejects are deterministic and retain evidence', () => {
+  const drinks = ['Aqua Drink Vitakraft 500ml', 'Drink Kattovit Gastro 135ml', 'Drink Kattovit Niere Renal 135ml', 'Drink KATTOVIT Recovery 135ml'];
+  for (const name of drinks) assert.equal(exclusionDecision(raw({ name, animalType: 'cat', category: 'Granule pro kočky' }), config, { mainFoodScope: true, scopeBeforeLegacy: true }).ruleId, 'R002');
+  const document = { products: [
+    raw({ name: 'Vzorek Ontario Adult 100g' }),
+    raw({ name: 'Complete veterinary dry food mini 100g', category: 'Veterinární diety pro psy', url: 'https://www.superzoo.cz/complete-veterinary-dry-food-mini-100g/' }),
+  ] };
+  const rejects = collectScopeRejects(document, config, { mainFoodScope: true });
+  assert.equal(rejects.length, 1);
+  assert.equal(rejects[0].ruleId, 'R003');
+  assert.ok(rejects[0].reviewIdentity);
+  assert.equal(convertDocument(document, config, { mainFoodScope: true }).length, 1);
 });
 
 test('stable excluded URL remains blocked after ID and name change', () => {
