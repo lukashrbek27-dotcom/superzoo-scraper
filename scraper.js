@@ -169,6 +169,14 @@ function selectReviewCategories(values, reviewSidecarPath) {
   return CATEGORIES.filter(category => requested.has(category.key));
 }
 
+function reviewMaxPages(value, reviewSidecarPath, selectedCategories) {
+  if (value === undefined) return undefined;
+  if (!reviewSidecarPath) throw new Error('--review-max-pages is available only with --review-sidecar.');
+  if (selectedCategories.length === CATEGORIES.length) throw new Error('--review-max-pages requires a scoped --review-category.');
+  if (value !== '1') throw new Error('--review-max-pages must be exactly 1.');
+  return 1;
+}
+
 function incrementCount(target, key) { target[key] = (target[key] || 0) + 1; }
 function hashProductSet(fingerprint) { return crypto.createHash('sha256').update(fingerprint).digest('hex'); }
 function safeDiagnosticUrl(value, config) { try { return value ? canonicalizeProductUrl(value, config) : null; } catch { return null; } }
@@ -187,13 +195,17 @@ function filteredDiagnostic(product, reason, category, pageIndex, cardIndex) {
 }
 function createReviewSidecar(raw, sidecar) {
   const sourceGroups = new Map();
-  for (const product of raw.products) { const entries = sourceGroups.get(product.sourceIdentity) || []; entries.push(product); sourceGroups.set(product.sourceIdentity, entries); }
+  const availabilityByStatus = { in_stock: 0, unknown: 0 };
+  for (const product of raw.products) {
+    const entries = sourceGroups.get(product.sourceIdentity) || []; entries.push(product); sourceGroups.set(product.sourceIdentity, entries);
+    availabilityByStatus[product?.availability?.status === 'in_stock' ? 'in_stock' : 'unknown'] += 1;
+  }
   let crossCategoryDuplicateSourceIdentities = 0; let withinCategoryDuplicateSourceIdentities = 0;
   for (const entries of sourceGroups.values()) if (entries.length > 1) {
     if (new Set(entries.map(product => product.category)).size > 1) crossCategoryDuplicateSourceIdentities += 1;
     else withinCategoryDuplicateSourceIdentities += 1;
   }
-  return { schemaVersion: 2, scrapedAt: raw.scrapedAt, source: raw.source, reviewOnly: true, scopedReview: Boolean(sidecar.scopedReview), configuredCategories: sidecar.configuredCategories || CATEGORIES.map(category => category.key), selectedCategories: sidecar.selectedCategories || CATEGORIES.map(category => category.key), categories: [...new Set(sidecar.pages.map(page => page.category))], pages: sidecar.pages, rejectedCards: sidecar.rejectedCards, filteredCards: sidecar.filteredCards, summary: { pageStates: sidecar.pages.length, cards: sidecar.pages.reduce((total, page) => total + page.cardCount, 0), accepted: raw.products.length, rejected: sidecar.rejectedCards.length, filtered: sidecar.filteredCards.length, rejectedByReason: sidecar.rejectedByReason, rejectedByCategory: sidecar.rejectedByCategory, filteredByType: sidecar.filteredByType, filteredByCategory: sidecar.filteredByCategory, stateChangedCount: sidecar.pages.filter(page => page.stateChanged === true).length, duplicatePageCount: sidecar.pages.filter(page => page.duplicatePage === true).length, categoryTerminationReasons: sidecar.categoryTerminationReasons, uniqueSourceIdentities: sourceGroups.size, crossCategoryDuplicateSourceIdentities, withinCategoryDuplicateSourceIdentities } };
+  return { schemaVersion: 2, scrapedAt: raw.scrapedAt, source: raw.source, reviewOnly: true, scopedReview: Boolean(sidecar.scopedReview), configuredCategories: sidecar.configuredCategories || CATEGORIES.map(category => category.key), selectedCategories: sidecar.selectedCategories || CATEGORIES.map(category => category.key), categories: [...new Set(sidecar.pages.map(page => page.category))], pages: sidecar.pages, rejectedCards: sidecar.rejectedCards, filteredCards: sidecar.filteredCards, summary: { pageStates: sidecar.pages.length, cards: sidecar.pages.reduce((total, page) => total + page.cardCount, 0), accepted: raw.products.length, rejected: sidecar.rejectedCards.length, filtered: sidecar.filteredCards.length, rejectedByReason: sidecar.rejectedByReason, rejectedByCategory: sidecar.rejectedByCategory, filteredByType: sidecar.filteredByType, filteredByCategory: sidecar.filteredByCategory, availabilityByStatus, stateChangedCount: sidecar.pages.filter(page => page.stateChanged === true).length, duplicatePageCount: sidecar.pages.filter(page => page.duplicatePage === true).length, categoryTerminationReasons: sidecar.categoryTerminationReasons, uniqueSourceIdentities: sourceGroups.size, crossCategoryDuplicateSourceIdentities, withinCategoryDuplicateSourceIdentities } };
 }
 
 async function scrapeCategory(page, category, config, options = DEFAULTS) {
@@ -254,7 +266,14 @@ async function scrapeCategory(page, category, config, options = DEFAULTS) {
       }
       break;
     }
-    if (pageNumber === options.maxPages) throw new Error(`Category ${category.name} exceeded the ${options.maxPages}-page safety limit.`);
+    if (pageNumber === options.maxPages) {
+      if (options.reviewSidecar && options.maxPages === 1) {
+        options.reviewSidecar.pages[options.reviewSidecar.pages.length - 1].terminationReason = 'review_max_pages';
+        options.reviewSidecar.categoryTerminationReasons[category.name] = 'review_max_pages';
+        break;
+      }
+      throw new Error(`Category ${category.name} exceeded the ${options.maxPages}-page safety limit.`);
+    }
     const previousState = { canonicalUrl: canonicalPageUrl(page.url()), domFingerprint: extraction.domFingerprint };
     await advancePagination(page, category.name, previousState, options);
   }
@@ -293,7 +312,7 @@ async function scrape(options = {}) {
   } finally { await browser.close(); }
 }
 
-async function runScraperToFiles({ outputPath, failureReportPath, reviewSidecarPath, categories, configPath, scrapeFunction = scrape }) {
+async function runScraperToFiles({ outputPath, failureReportPath, reviewSidecarPath, categories, configPath, maxPages, scrapeFunction = scrape }) {
   if (!outputPath || !failureReportPath) throw new Error('Use --output=<staging.json> and --failure-report=<failure.json>.');
   assertSafeOutputPath(outputPath);
   assertSafeOutputPath(failureReportPath);
@@ -301,7 +320,7 @@ async function runScraperToFiles({ outputPath, failureReportPath, reviewSidecarP
   try {
     const selectedCategories = categories || CATEGORIES;
     const reviewSidecar = reviewSidecarPath ? { pages: [], rejectedCards: [], filteredCards: [], rejectedByReason: {}, rejectedByCategory: {}, filteredByType: {}, filteredByCategory: {}, categoryTerminationReasons: {}, configuredCategories: CATEGORIES.map(category => category.key), selectedCategories: selectedCategories.map(category => category.key), scopedReview: selectedCategories.length !== CATEGORIES.length } : null;
-    const result = await scrapeFunction({ configPath, categories: selectedCategories, reviewSidecar });
+    const result = await scrapeFunction({ configPath, categories: selectedCategories, reviewSidecar, ...(maxPages === undefined ? {} : { maxPages }) });
     writeJsonAtomic(outputPath, result);
     if (reviewSidecarPath) writeJsonAtomic(reviewSidecarPath, reviewSidecar.document || createReviewSidecar(result, reviewSidecar));
     console.log(`[scrape] review-only staging output: ${redactDiagnosticText(outputPath)} (${result.totalProducts} products)`);
@@ -311,19 +330,21 @@ async function runScraperToFiles({ outputPath, failureReportPath, reviewSidecarP
   }
 }
 
-async function main() {
-  const args = parseCliArgs(process.argv.slice(2));
+async function main(argv = process.argv.slice(2), { runScraperToFilesFunction = runScraperToFiles } = {}) {
+  const args = parseCliArgs(argv);
   const reviewSidecarPath = args['review-sidecar'];
-  const categories = selectReviewCategories(reviewCategoryValues(process.argv.slice(2)), reviewSidecarPath);
-  return runScraperToFiles({
+  const categories = selectReviewCategories(reviewCategoryValues(argv), reviewSidecarPath);
+  const maxPages = reviewMaxPages(args['review-max-pages'], reviewSidecarPath, categories);
+  return runScraperToFilesFunction({
     outputPath: args.output || process.env.SUPERZOO_OUTPUT_PATH,
     failureReportPath: args['failure-report'] || process.env.SUPERZOO_FAILURE_REPORT_PATH,
     reviewSidecarPath,
     categories,
     configPath: args.config,
+    ...(maxPages === undefined ? {} : { maxPages }),
   });
 }
 
 if (require.main === module) main().catch(error => { console.error(`[scrape] FAILED: ${redactDiagnosticText(error)}`); process.exitCode = 1; });
 
-module.exports = { CATEGORIES, DEFAULTS, advancePagination, assertPageFingerprintChanged, assertPageFingerprintNotSeen, canonicalPageUrl, clickNextIfExpectedState, createReviewSidecar, pageFingerprint, reviewCategoryValues, readPaginationState, runScraperToFiles, scrape, scrapeCategory, selectReviewCategories, waitForPaginationChange, withRetry };
+module.exports = { CATEGORIES, DEFAULTS, advancePagination, assertPageFingerprintChanged, assertPageFingerprintNotSeen, canonicalPageUrl, clickNextIfExpectedState, createReviewSidecar, main, pageFingerprint, reviewCategoryValues, reviewMaxPages, readPaginationState, runScraperToFiles, scrape, scrapeCategory, selectReviewCategories, waitForPaginationChange, withRetry };

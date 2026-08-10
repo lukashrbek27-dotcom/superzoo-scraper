@@ -4,6 +4,13 @@ const { assertSafeOutputPath, buildIdentity, canonicalizeProductUrl, countByCate
 
 function issue(collection, code, message, productIndex = null, identity = null) { collection.push({ code, message: redactDiagnosticText(message), productIndex, identity: identity == null ? null : redactDiagnosticText(identity) }); }
 function sumCounts(counts) { return Object.values(counts || {}).reduce((sum, value) => sum + Number(value || 0), 0); }
+function validateAvailability(value, errors, index) {
+  if (value === undefined) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) { issue(errors, 'invalid_availability', 'availability must be an object when present.', index); return; }
+  if (!['in_stock', 'unknown'].includes(value.status)) issue(errors, 'invalid_availability_status', 'availability.status must be in_stock or unknown.', index);
+  if (value.rawText !== null && typeof value.rawText !== 'string') issue(errors, 'invalid_availability_raw_text', 'availability.rawText must be a string or null.', index);
+  if (typeof value.rawText === 'string' && value.rawText !== value.rawText.replace(/\s+/g, ' ').trim()) issue(errors, 'invalid_availability_raw_text', 'availability.rawText must be whitespace-normalized.', index);
+}
 
 function validateConfigContract(config) {
   const errors = [];
@@ -54,6 +61,7 @@ function validateRawDocument(document, config, options = {}) {
   const duplicateSources = [];
   const duplicateCanonicals = [];
   for (const [index, product] of products.entries()) {
+    validateAvailability(product?.availability, errors, index);
     let current;
     try { current = normalizeRawProduct(product, config); } catch (error) { issue(errors, 'invalid_or_foreign_url', redactDiagnosticText(error), index); continue; }
     normalized.push(current);

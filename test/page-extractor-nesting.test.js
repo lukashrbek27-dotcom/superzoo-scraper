@@ -61,7 +61,7 @@ test('nested matching action is not extracted as a separate product card', () =>
   assert.deepEqual(result.rejectedReasons, {});
   assert.deepEqual(result.products[0], {
     sourceProductId: 'product-1', name: 'Test product', price: '199 Kč', salePrice: null, originalPrice: null,
-    url: 'https://www.superzoo.cz/test-product/', image: 'https://cdn.example.test/product.jpg', category: 'Test category', animalType: 'rodent',
+    url: 'https://www.superzoo.cz/test-product/', image: 'https://cdn.example.test/product.jpg', availability: { status: 'unknown', rawText: null }, category: 'Test category', animalType: 'rodent',
   });
 });
 
