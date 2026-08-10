@@ -1,17 +1,18 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const { chromium } = require('playwright');
-const { countByCategory, exclusionReason, loadConfig, normalizeRawProduct, parseCliArgs, assertSafeOutputPath, redactDiagnosticText, serializeDiagnosticError, writeJsonAtomic } = require('./lib/safety');
+const { canonicalizeProductUrl, countByCategory, exclusionReason, inferSize, loadConfig, normalizeRawProduct, parseCliArgs, assertSafeOutputPath, redactDiagnosticText, serializeDiagnosticError, writeJsonAtomic } = require('./lib/safety');
 const { extractProductCards, productCardDomFingerprint } = require('./lib/page-extractor');
 const PRODUCT_CARD_DOM_FINGERPRINT_SOURCE = productCardDomFingerprint.toString();
 
 const CATEGORIES = [
-  { name: 'Granule pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/krmivo-granule/granule/' },
-  { name: 'Veterinární diety pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/granule/veterinarni-diety/' },
-  { name: 'Granule pro kočky', animalType: 'cat', url: 'https://www.superzoo.cz/kocky/krmivo-a-pamlsky/granule-pro-kocky/' },
-  { name: 'Veterinární diety pro kočky', animalType: 'cat', url: 'https://www.superzoo.cz/kocky/krmivo-a-pamlsky/veterinarni-diety/' },
-  { name: 'Plnohodnotné krmivo pro hlodavce', animalType: 'rodent', url: 'https://www.superzoo.cz/drobni-savci/krmivo-a-doplnky-stravy/plnohodnotne-krmivo/' },
-  { name: 'Krmivo a pamlsky pro hlodavce', animalType: 'rodent', url: 'https://www.superzoo.cz/drobni-savci/krmivo-a-doplnky-stravy/' },
+  { key: 'dog-granules', name: 'Granule pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/krmivo-granule/granule/' },
+  { key: 'dog-veterinary-diets', name: 'Veterinární diety pro psy', animalType: 'dog', url: 'https://www.superzoo.cz/psi/granule/veterinarni-diety/' },
+  { key: 'cat-granules', name: 'Granule pro kočky', animalType: 'cat', url: 'https://www.superzoo.cz/kocky/krmivo-a-pamlsky/granule-pro-kocky/' },
+  { key: 'cat-veterinary-diets', name: 'Veterinární diety pro kočky', animalType: 'cat', url: 'https://www.superzoo.cz/kocky/krmivo-a-pamlsky/veterinarni-diety/' },
+  { key: 'rodent-complete-feed', name: 'Plnohodnotné krmivo pro hlodavce', animalType: 'rodent', url: 'https://www.superzoo.cz/drobni-savci/krmivo-a-doplnky-stravy/plnohodnotne-krmivo/' },
+  { key: 'rodent-food-treats', name: 'Krmivo a pamlsky pro hlodavce', animalType: 'rodent', url: 'https://www.superzoo.cz/drobni-savci/krmivo-a-doplnky-stravy/' },
 ];
 
 const DEFAULTS = { maxPages: 60, navigationTimeoutMs: 45_000, selectorTimeoutMs: 20_000, paginationTimeoutMs: 20_000, retryAttempts: 3, retryBaseDelayMs: 1_500 };
@@ -148,6 +149,53 @@ function mergeReasonCounts(target, source) {
   for (const [reason, count] of Object.entries(source || {})) target[reason] = (target[reason] || 0) + count;
 }
 
+function reviewCategoryValues(argv) {
+  const prefix = '--review-category=';
+  const values = [];
+  for (const argument of argv) {
+    if (argument === '--review-category') values.push('');
+    else if (argument.startsWith(prefix)) values.push(argument.slice(prefix.length));
+  }
+  return values;
+}
+function selectReviewCategories(values, reviewSidecarPath) {
+  if (values.length === 0) return CATEGORIES;
+  if (!reviewSidecarPath) throw new Error('--review-category is available only with --review-sidecar.');
+  if (values.some(value => !value)) throw new Error('--review-category requires a non-empty stable category key.');
+  const configuredKeys = CATEGORIES.map(category => category.key);
+  const requested = new Set(values);
+  const unknown = values.filter(value => !configuredKeys.includes(value));
+  if (unknown.length) throw new Error(`Unknown --review-category key: ${unknown[0]}. Allowed keys: ${configuredKeys.join(', ')}.`);
+  return CATEGORIES.filter(category => requested.has(category.key));
+}
+
+function incrementCount(target, key) { target[key] = (target[key] || 0) + 1; }
+function hashProductSet(fingerprint) { return crypto.createHash('sha256').update(fingerprint).digest('hex'); }
+function safeDiagnosticUrl(value, config) { try { return value ? canonicalizeProductUrl(value, config) : null; } catch { return null; } }
+function sanitizeDiagnosticPageUrl(value) {
+  const parsed = new URL(canonicalPageUrl(value));
+  for (const key of [...parsed.searchParams.keys()]) if (/^(?:utm_|fbclid$|gclid$)/i.test(key)) parsed.searchParams.delete(key);
+  parsed.searchParams.sort();
+  return parsed.toString();
+}
+function rejectedDiagnostic(detail, category, pageIndex, selector, config) {
+  const size = inferSize(detail.name || '');
+  return { category: category.name, pageIndex, reason: detail.reason, sourceProductId: detail.sourceProductId || null, canonicalUrl: safeDiagnosticUrl(detail.url, config), name: detail.name || null, image: detail.image || null, price: detail.price || null, size: size.size || null, brand: null, cardSelector: selector, cardIndex: detail.cardIndex };
+}
+function filteredDiagnostic(product, reason, category, pageIndex, cardIndex) {
+  return { category: category.name, pageIndex, filterType: reason, exclusionRuleId: reason === 'stable_source_url' ? product.canonicalUrl : null, sourceProductId: product.sourceProductId || null, canonicalUrl: product.canonicalUrl, name: product.name || null, cardIndex };
+}
+function createReviewSidecar(raw, sidecar) {
+  const sourceGroups = new Map();
+  for (const product of raw.products) { const entries = sourceGroups.get(product.sourceIdentity) || []; entries.push(product); sourceGroups.set(product.sourceIdentity, entries); }
+  let crossCategoryDuplicateSourceIdentities = 0; let withinCategoryDuplicateSourceIdentities = 0;
+  for (const entries of sourceGroups.values()) if (entries.length > 1) {
+    if (new Set(entries.map(product => product.category)).size > 1) crossCategoryDuplicateSourceIdentities += 1;
+    else withinCategoryDuplicateSourceIdentities += 1;
+  }
+  return { schemaVersion: 2, scrapedAt: raw.scrapedAt, source: raw.source, reviewOnly: true, scopedReview: Boolean(sidecar.scopedReview), configuredCategories: sidecar.configuredCategories || CATEGORIES.map(category => category.key), selectedCategories: sidecar.selectedCategories || CATEGORIES.map(category => category.key), categories: [...new Set(sidecar.pages.map(page => page.category))], pages: sidecar.pages, rejectedCards: sidecar.rejectedCards, filteredCards: sidecar.filteredCards, summary: { pageStates: sidecar.pages.length, cards: sidecar.pages.reduce((total, page) => total + page.cardCount, 0), accepted: raw.products.length, rejected: sidecar.rejectedCards.length, filtered: sidecar.filteredCards.length, rejectedByReason: sidecar.rejectedByReason, rejectedByCategory: sidecar.rejectedByCategory, filteredByType: sidecar.filteredByType, filteredByCategory: sidecar.filteredByCategory, stateChangedCount: sidecar.pages.filter(page => page.stateChanged === true).length, duplicatePageCount: sidecar.pages.filter(page => page.duplicatePage === true).length, categoryTerminationReasons: sidecar.categoryTerminationReasons, uniqueSourceIdentities: sourceGroups.size, crossCategoryDuplicateSourceIdentities, withinCategoryDuplicateSourceIdentities } };
+}
+
 async function scrapeCategory(page, category, config, options = DEFAULTS) {
   await (options.navigateToCategory || navigateToCategory)(page, category, options);
   await (options.closeCookieDialog || closeCookieDialog)(page);
@@ -166,21 +214,46 @@ async function scrapeCategory(page, category, config, options = DEFAULTS) {
     if (extraction.products.length === 0) throw new Error(`Category ${category.name} returned zero valid product cards on page ${pageNumber}; reasons=${JSON.stringify(extraction.rejectedReasons)}.`);
 
     const currentPage = [];
-    for (const extracted of extraction.products) {
+    const pageIndex = pageNumber - 1;
+    if (options.reviewSidecar) for (const detail of extraction.rejectedCardDetails || []) {
+      const record = rejectedDiagnostic(detail, category, pageIndex, extraction.selector, config);
+      options.reviewSidecar.rejectedCards.push(record);
+      incrementCount(options.reviewSidecar.rejectedByReason, record.reason);
+      incrementCount(options.reviewSidecar.rejectedByCategory, category.name);
+    }
+    let filteredCount = 0;
+    for (const [cardIndex, extracted] of extraction.products.entries()) {
       const normalized = normalizeRawProduct(extracted, config);
       const reason = exclusionReason(normalized, config);
-      if (reason) { stats.filteredOutCards += 1; stats.rejectedReasons[`filtered_${reason}`] = (stats.rejectedReasons[`filtered_${reason}`] || 0) + 1; continue; }
+      if (reason) {
+        stats.filteredOutCards += 1; filteredCount += 1;
+        stats.rejectedReasons[`filtered_${reason}`] = (stats.rejectedReasons[`filtered_${reason}`] || 0) + 1;
+        if (options.reviewSidecar) {
+          const record = filteredDiagnostic(normalized, reason, category, pageIndex, cardIndex);
+          options.reviewSidecar.filteredCards.push(record);
+          incrementCount(options.reviewSidecar.filteredByType, reason);
+          incrementCount(options.reviewSidecar.filteredByCategory, category.name);
+        }
+        continue;
+      }
       if (!Number.isFinite(normalized.price) || normalized.price <= 0) { stats.rejectedCards += 1; stats.rejectedReasons.invalid_price = (stats.rejectedReasons.invalid_price || 0) + 1; continue; }
       accepted.push(normalized);
       currentPage.push(normalized);
     }
     if (currentPage.length === 0) throw new Error(`Category ${category.name} produced no in-scope products on page ${pageNumber}.`);
     const fingerprint = pageFingerprint(currentPage);
+    if (options.reviewSidecar) options.reviewSidecar.pages.push({ category: category.name, pageUrl: sanitizeDiagnosticPageUrl(page.url()), pageNumber: null, pageIndex, cardSelector: extraction.selector, pageFingerprint: extraction.domFingerprint, productSetHash: hashProductSet(fingerprint), cardCount: extraction.products.length + extraction.rejectedCards, acceptedCount: currentPage.length, rejectedCount: extraction.rejectedCards, filteredCount, stateChanged: pageNumber === 1 ? false : true, duplicatePage: seenFingerprints.has(fingerprint), terminationReason: null });
     assertPageFingerprintNotSeen(seenFingerprints, fingerprint, category.name, pageNumber);
     seenFingerprints.add(fingerprint);
 
     const nextControl = await (options.findNextPageControl || findNextPageControl)(page);
-    if (!nextControl) break;
+    if (!nextControl) {
+      if (options.reviewSidecar) {
+        options.reviewSidecar.pages[options.reviewSidecar.pages.length - 1].terminationReason = 'no_next_control';
+        options.reviewSidecar.categoryTerminationReasons[category.name] = 'no_next_control';
+      }
+      break;
+    }
     if (pageNumber === options.maxPages) throw new Error(`Category ${category.name} exceeded the ${options.maxPages}-page safety limit.`);
     const previousState = { canonicalUrl: canonicalPageUrl(page.url()), domFingerprint: extraction.domFingerprint };
     await advancePagination(page, category.name, previousState, options);
@@ -203,27 +276,34 @@ async function scrape(options = {}) {
     await context.addInitScript(() => { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); });
     const page = await context.newPage();
     const products = [];
+    const reviewSidecar = options.reviewSidecar || null;
     const categoryStats = {};
     for (const category of options.categories || CATEGORIES) {
       console.log(`[scrape] required category: ${category.name}`);
-      const result = await (options.scrapeCategoryFunction || scrapeCategory)(page, category, config, settings);
+      const result = await (options.scrapeCategoryFunction || scrapeCategory)(page, category, config, { ...settings, reviewSidecar });
       categoryStats[category.name] = result.stats;
       products.push(...result.products);
     }
     if (products.length === 0) throw new Error('SuperZoo scrape returned zero products.');
     const sum = key => Object.values(categoryStats).reduce((total, stats) => total + stats[key], 0);
     const rejectedReasons = {}; for (const stats of Object.values(categoryStats)) mergeReasonCounts(rejectedReasons, stats.rejectedReasons);
-    return { schemaVersion: 2, scrapedAt: new Date().toISOString(), source: 'superzoo.cz', affiliate: 'CJ - Mazlíček+', reviewOnly: true, totalProducts: products.length, requiredCategories: config.sourcePolicy.requiredCategories, categoryCounts: countByCategory(products), runStats: { rejectedCards: sum('rejectedCards'), unparseableCards: sum('unparseableCards'), filteredOutCards: sum('filteredOutCards'), rejectedReasons, categoryStats }, products };
+    const raw = { schemaVersion: 2, scrapedAt: new Date().toISOString(), source: 'superzoo.cz', affiliate: 'CJ - Mazlíček+', reviewOnly: true, totalProducts: products.length, requiredCategories: config.sourcePolicy.requiredCategories, categoryCounts: countByCategory(products), runStats: { rejectedCards: sum('rejectedCards'), unparseableCards: sum('unparseableCards'), filteredOutCards: sum('filteredOutCards'), rejectedReasons, categoryStats }, products };
+    if (reviewSidecar) reviewSidecar.document = createReviewSidecar(raw, reviewSidecar);
+    return raw;
   } finally { await browser.close(); }
 }
 
-async function runScraperToFiles({ outputPath, failureReportPath, configPath, scrapeFunction = scrape }) {
+async function runScraperToFiles({ outputPath, failureReportPath, reviewSidecarPath, categories, configPath, scrapeFunction = scrape }) {
   if (!outputPath || !failureReportPath) throw new Error('Use --output=<staging.json> and --failure-report=<failure.json>.');
   assertSafeOutputPath(outputPath);
   assertSafeOutputPath(failureReportPath);
+  if (reviewSidecarPath) assertSafeOutputPath(reviewSidecarPath);
   try {
-    const result = await scrapeFunction({ configPath });
+    const selectedCategories = categories || CATEGORIES;
+    const reviewSidecar = reviewSidecarPath ? { pages: [], rejectedCards: [], filteredCards: [], rejectedByReason: {}, rejectedByCategory: {}, filteredByType: {}, filteredByCategory: {}, categoryTerminationReasons: {}, configuredCategories: CATEGORIES.map(category => category.key), selectedCategories: selectedCategories.map(category => category.key), scopedReview: selectedCategories.length !== CATEGORIES.length } : null;
+    const result = await scrapeFunction({ configPath, categories: selectedCategories, reviewSidecar });
     writeJsonAtomic(outputPath, result);
+    if (reviewSidecarPath) writeJsonAtomic(reviewSidecarPath, reviewSidecar.document || createReviewSidecar(result, reviewSidecar));
     console.log(`[scrape] review-only staging output: ${redactDiagnosticText(outputPath)} (${result.totalProducts} products)`);
   } catch (error) {
     writeJsonAtomic(failureReportPath, { schemaVersion: 1, status: 'FAIL', stage: 'scrape', generatedAt: new Date().toISOString(), error: serializeDiagnosticError(error) });
@@ -233,13 +313,17 @@ async function runScraperToFiles({ outputPath, failureReportPath, configPath, sc
 
 async function main() {
   const args = parseCliArgs(process.argv.slice(2));
+  const reviewSidecarPath = args['review-sidecar'];
+  const categories = selectReviewCategories(reviewCategoryValues(process.argv.slice(2)), reviewSidecarPath);
   return runScraperToFiles({
     outputPath: args.output || process.env.SUPERZOO_OUTPUT_PATH,
     failureReportPath: args['failure-report'] || process.env.SUPERZOO_FAILURE_REPORT_PATH,
+    reviewSidecarPath,
+    categories,
     configPath: args.config,
   });
 }
 
 if (require.main === module) main().catch(error => { console.error(`[scrape] FAILED: ${redactDiagnosticText(error)}`); process.exitCode = 1; });
 
-module.exports = { CATEGORIES, DEFAULTS, advancePagination, assertPageFingerprintChanged, assertPageFingerprintNotSeen, canonicalPageUrl, clickNextIfExpectedState, pageFingerprint, readPaginationState, runScraperToFiles, scrape, scrapeCategory, waitForPaginationChange, withRetry };
+module.exports = { CATEGORIES, DEFAULTS, advancePagination, assertPageFingerprintChanged, assertPageFingerprintNotSeen, canonicalPageUrl, clickNextIfExpectedState, createReviewSidecar, pageFingerprint, reviewCategoryValues, readPaginationState, runScraperToFiles, scrape, scrapeCategory, selectReviewCategories, waitForPaginationChange, withRetry };
