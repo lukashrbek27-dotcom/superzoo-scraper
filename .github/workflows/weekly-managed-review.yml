@@ -1,0 +1,91 @@
+name: SuperZoo weekly managed review
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: superzoo-weekly-managed-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout scraper
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Checkout authoritative catalog
+        uses: actions/checkout@v4
+        with:
+          repository: lukashrbek27-dotcom/mazlicek-plus
+          ref: main
+          path: app-catalog
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+      - name: Create review directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/superzoo-weekly-review"
+          mkdir -p "$root"
+          printf 'SUPERZOO_WEEKLY_OUTPUT_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
+      - name: Run full review scrape
+        run: |
+          node scraper.js \
+            --output="$SUPERZOO_WEEKLY_OUTPUT_ROOT/superzoo-raw.json" \
+            --review-sidecar="$SUPERZOO_WEEKLY_OUTPUT_ROOT/review-sidecar.json" \
+            --failure-report="$SUPERZOO_WEEKLY_OUTPUT_ROOT/scrape-failure.json"
+      - name: Build weekly report
+        run: |
+          npm run review:weekly -- \
+            --raw="$SUPERZOO_WEEKLY_OUTPUT_ROOT/superzoo-raw.json" \
+            --baseline=config/superzoo-automation-baseline.json \
+            --catalog=app-catalog/src/data/partner-foods.json \
+            --output-dir="$SUPERZOO_WEEKLY_OUTPUT_ROOT" \
+            --run-url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Write summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$SUPERZOO_WEEKLY_OUTPUT_ROOT/superzoo-weekly-review.json" ]; then
+            node -e 'const r=require(process.argv[1]); console.log(`# ${r.verdict}`); console.log(`- NEW: ${r.counts.new}`); console.log(`- MISSING: ${r.counts.missing}`); console.log(`- IDENTITY_CHANGE: ${r.counts.identityChange}`);' "$SUPERZOO_WEEKLY_OUTPUT_ROOT/superzoo-weekly-review.json" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '# SuperZoo weekly review failed before report generation' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload review artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: superzoo-weekly-review-${{ github.run_id }}
+          path: ${{ runner.temp }}/superzoo-weekly-review/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Send safe review/error alert
+        if: always()
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SUPERZOO_AUTOMATION_ALERT_TO: ${{ secrets.SUPERZOO_AUTOMATION_ALERT_TO }}
+          SUPERZOO_AUTOMATION_FROM: ${{ secrets.SUPERZOO_AUTOMATION_FROM }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          node send-superzoo-alert.js \
+            --report="$SUPERZOO_WEEKLY_OUTPUT_ROOT/superzoo-weekly-review.json" \
+            --run-url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --reason="weekly workflow failed before report generation" >> "$GITHUB_STEP_SUMMARY"
