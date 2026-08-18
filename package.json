@@ -10,6 +10,8 @@
     "convert:review": "node convert-superzoo.js --input=review-artifacts/superzoo-raw.json --output=review-artifacts/superzoo-converted-review.json",
     "validate:converted": "node validate-converted.js --input=review-artifacts/superzoo-converted-review.json --report=review-artifacts/converted-validation.json",
     "report:review": "node generate-review-report.js --raw=review-artifacts/raw-validation.json --converted=review-artifacts/converted-validation.json --failure=review-artifacts/scrape-failure.json --output=review-artifacts/validation-summary.md",
+    "validate:managed-price": "node lib/superzoo-managed-price-validation.js",
+    "generate:automation-baseline": "node generate-superzoo-automation-baseline.js",
     "verify:baseline": "node prepare-review-snapshot.js --verify-only",
     "test": "node --test test/*.test.js"
   },

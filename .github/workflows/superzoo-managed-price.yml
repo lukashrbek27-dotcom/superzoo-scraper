@@ -1,0 +1,89 @@
+name: SuperZoo managed price review
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: superzoo-managed-price-review
+  cancel-in-progress: false
+
+jobs:
+  managed-price:
+    name: Validate managed SuperZoo prices
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout scraper
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout authoritative application catalog
+        uses: actions/checkout@v4
+        with:
+          repository: lukashrbek27-dotcom/mazlicek-plus
+          ref: main
+          path: app-catalog
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Create create-only review directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/superzoo-managed-price"
+          mkdir -p "$root"
+          printf 'SUPERZOO_MANAGED_OUTPUT_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
+
+      - name: Run full technical scraper
+        run: |
+          node scraper.js \
+            --output="$SUPERZOO_MANAGED_OUTPUT_ROOT/superzoo-raw.json" \
+            --review-sidecar="$SUPERZOO_MANAGED_OUTPUT_ROOT/review-sidecar.json" \
+            --failure-report="$SUPERZOO_MANAGED_OUTPUT_ROOT/scrape-failure.json"
+
+      - name: Build and validate managed-price candidate
+        run: |
+          npm run validate:managed-price -- \
+            --raw="$SUPERZOO_MANAGED_OUTPUT_ROOT/superzoo-raw.json" \
+            --sidecar="$SUPERZOO_MANAGED_OUTPUT_ROOT/review-sidecar.json" \
+            --automation-baseline="config/superzoo-automation-baseline.json" \
+            --catalog="app-catalog/src/data/partner-foods.json" \
+            --output-dir="$SUPERZOO_MANAGED_OUTPUT_ROOT" \
+            --generated-at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+
+      - name: Write managed-price job summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$SUPERZOO_MANAGED_OUTPUT_ROOT/superzoo-managed-price-validation.json"
+          if [ -f "$report" ]; then
+            node -e 'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(`# ${r.verdict}`); console.log(`- Managed coverage: ${r.managedCoverage.observed}/${r.managedCoverage.required}`); console.log(`- Changed managed: ${r.changedManaged}`); console.log(`- No-op: ${r.passed && r.changedManaged === 0}`); console.log(`- Blockers: ${r.blockers.map(x=>x.code+":"+x.count).join(", ") || "none"}`); console.log(`- Remote actions: ${JSON.stringify(r.remoteActions)}`);' "$report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '# SuperZoo managed-price producer did not create a validation report' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload managed-price evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: superzoo-managed-price-${{ github.run_id }}
+          path: ${{ runner.temp }}/superzoo-managed-price/
+          if-no-files-found: warn
+          retention-days: 14
