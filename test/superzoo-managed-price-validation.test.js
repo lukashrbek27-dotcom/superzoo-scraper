@@ -256,7 +256,11 @@ test('scheduled producer workflow is read-only, reproducible, and has no product
   assert.match(workflow, /group: superzoo-managed-price-review/u);
   assert.match(workflow, /cancel-in-progress: false/u);
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/u);
+  assert.match(workflow, /repository: lukashrbek27-dotcom\/mazlicek-plus\s+ref: 467a67fd0afca9644fabd8a761c5c0d1efe3b5b0\s+token: \$\{\{ secrets\.SUPERZOO_CATALOG_READ_TOKEN \}\}/u);
+  assert.doesNotMatch(workflow, /ref: main/u);
+  assert.match(workflow, /sparse-checkout: \|\s+src\/data\/partner-foods\.json\s+sparse-checkout-cone-mode: false/u);
   assert.equal((workflow.match(/persist-credentials: false/gu) || []).length, 2);
+  assert.match(workflow, /test "\$catalog_commit" = "467a67fd0afca9644fabd8a761c5c0d1efe3b5b0"/u);
   assert.match(workflow, /run: npm test/u);
   assert.match(workflow, /mktemp -d "\$RUNNER_TEMP\/superzoo-managed-price-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}-XXXXXX"/u);
   assert.match(workflow, /--automation-baseline="config\/superzoo-automation-baseline\.json"/u);
@@ -266,6 +270,11 @@ test('scheduled producer workflow is read-only, reproducible, and has no product
   assert.doesNotMatch(workflow, /git\s+(?:commit|push)|gcloud|current\.json|PRICE_OVERLAY_SOURCE_URL|firebase|firestore|FCM|publisher|deploy-production/iu);
   assert.match(workflow, /actions\/upload-artifact@v4/u);
   assert.match(workflow, /retention-days: 14/u);
+  const summaryStep = workflow.slice(workflow.indexOf('- name: Write managed-price job summary'), workflow.indexOf('- name: Upload managed-price evidence'));
+  assert.match(summaryStep, /output_root="\$\{SUPERZOO_MANAGED_OUTPUT_ROOT:-\}"/u);
+  assert.match(summaryStep, /if \[ -n "\$output_root" \]; then/u);
+  assert.doesNotMatch(summaryStep, /report="\$SUPERZOO_MANAGED_OUTPUT_ROOT/u);
+  assert.match(summaryStep, /ended before creating a managed-price report/u);
 });
 
 test('daily validator loads without the legacy managed-set module', () => {
