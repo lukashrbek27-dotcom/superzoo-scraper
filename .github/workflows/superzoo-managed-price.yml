@@ -1,6 +1,8 @@
-name: SuperZoo managed price review
+name: SuperZoo scheduled managed-price producer
 
 on:
+  schedule:
+    - cron: '0 4 * * *'
   workflow_dispatch:
 
 permissions:
@@ -12,7 +14,7 @@ concurrency:
 
 jobs:
   managed-price:
-    name: Validate managed SuperZoo prices
+    name: Produce validated SuperZoo price evidence
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -20,6 +22,8 @@ jobs:
       - name: Checkout scraper
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Checkout authoritative application catalog
@@ -42,12 +46,24 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install chromium --with-deps
 
-      - name: Create create-only review directory
+      - name: Run offline safety and contract tests
+        run: npm test
+
+      - name: Bind checked-out commits
         shell: bash
         run: |
           set -euo pipefail
-          root="$RUNNER_TEMP/superzoo-managed-price"
-          mkdir -p "$root"
+          scraper_commit="$(git rev-parse HEAD)"
+          catalog_commit="$(git -C app-catalog rev-parse HEAD)"
+          test "$scraper_commit" = "$GITHUB_SHA"
+          printf 'SUPERZOO_SCRAPER_COMMIT=%s\n' "$scraper_commit" >> "$GITHUB_ENV"
+          printf 'SUPERZOO_CATALOG_COMMIT=%s\n' "$catalog_commit" >> "$GITHUB_ENV"
+
+      - name: Create unique create-only review directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$(mktemp -d "$RUNNER_TEMP/superzoo-managed-price-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
           printf 'SUPERZOO_MANAGED_OUTPUT_ROOT=%s\n' "$root" >> "$GITHUB_ENV"
 
       - name: Run full technical scraper
@@ -64,8 +80,26 @@ jobs:
             --sidecar="$SUPERZOO_MANAGED_OUTPUT_ROOT/review-sidecar.json" \
             --automation-baseline="config/superzoo-automation-baseline.json" \
             --catalog="app-catalog/src/data/partner-foods.json" \
-            --output-dir="$SUPERZOO_MANAGED_OUTPUT_ROOT" \
-            --generated-at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+            --output-dir="$SUPERZOO_MANAGED_OUTPUT_ROOT"
+
+      - name: Verify provenance and bind PASS artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node lib/superzoo-managed-price-provenance.js \
+            --raw="$SUPERZOO_MANAGED_OUTPUT_ROOT/superzoo-raw.json" \
+            --sidecar="$SUPERZOO_MANAGED_OUTPUT_ROOT/review-sidecar.json" \
+            --candidate="$SUPERZOO_MANAGED_OUTPUT_ROOT/superzoo-managed-price-candidate.json" \
+            --validation="$SUPERZOO_MANAGED_OUTPUT_ROOT/superzoo-managed-price-validation.json" \
+            --baseline="config/superzoo-automation-baseline.json" \
+            --catalog="app-catalog/src/data/partner-foods.json" \
+            --output="$SUPERZOO_MANAGED_OUTPUT_ROOT/superzoo-managed-price-provenance.json" \
+            --run-id="$GITHUB_RUN_ID" \
+            --run-attempt="$GITHUB_RUN_ATTEMPT" \
+            --repository="$GITHUB_REPOSITORY" \
+            --workflow-ref="$GITHUB_WORKFLOW_REF" \
+            --scraper-commit="$SUPERZOO_SCRAPER_COMMIT" \
+            --catalog-commit="$SUPERZOO_CATALOG_COMMIT"
 
       - name: Write managed-price job summary
         if: always()
@@ -80,10 +114,10 @@ jobs:
           fi
 
       - name: Upload managed-price evidence
-        if: always()
+        if: ${{ always() && env.SUPERZOO_MANAGED_OUTPUT_ROOT != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: superzoo-managed-price-${{ github.run_id }}
-          path: ${{ runner.temp }}/superzoo-managed-price/
+          name: superzoo-managed-price-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.SUPERZOO_MANAGED_OUTPUT_ROOT }}/
           if-no-files-found: warn
           retention-days: 14

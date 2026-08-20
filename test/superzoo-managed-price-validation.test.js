@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const test = require('node:test');
 const path = require('node:path');
@@ -12,40 +13,21 @@ const {
 const { buildAutomationBaseline } = require('../lib/superzoo-automation-baseline');
 
 const CATALOG_SHA = 'a'.repeat(64);
-const MANIFEST_SHA = 'b'.repeat(64);
+const BASELINE_SHA = 'b'.repeat(64);
 const PARTNER = 'SuperZoo';
 const WORKFLOW = path.join(__dirname, '..', '.github', 'workflows', 'superzoo-managed-price.yml');
+const VALIDATOR = path.join(__dirname, '..', 'lib', 'superzoo-managed-price-validation.js');
 
 function affiliate(url) {
   return `https://www.dpbolvw.net/click-101752886-12607708?url=${encodeURIComponent(`${url}/`)}`;
 }
 
 function makeFixture(count = 2) {
-  const entries = [];
   const catalog = [];
   const products = [];
   for (let index = 0; index < count; index += 1) {
     const productId = `managed-${index}`;
     const sourceIdentity = `https://www.superzoo.cz/managed-${index}`;
-    entries.push({
-      sourceRowIdentity: `source-row-${index}`,
-      sourceIdentity,
-      productId,
-      offerIdentity: { kind: 'product-partner', partner: PARTNER },
-      identityPackingFingerprint: `sha256:${String(index % 100).padStart(2, '0')}${'c'.repeat(62)}`,
-      approvalBasis: {
-        classification: 'matched_no_change',
-        matchingStrategy: 'targetUrl',
-        confidence: 'high',
-        exactTargetUrl: true,
-        reverseMatch: true,
-        identityFieldsEqual: true,
-        packingFieldsEqual: true,
-        uniqueSourceIdentity: true,
-        uniqueTargetOffer: true,
-        guardsPassed: true,
-      },
-    });
     catalog.push({
       id: productId,
       name: `Managed ${index}`,
@@ -77,9 +59,12 @@ function makeFixture(count = 2) {
   }));
   const sidecar = {
     schemaVersion: 2,
+    source: 'superzoo.cz',
     reviewOnly: true,
+    scrapedAt: '2026-08-18T07:00:00.000Z',
     configuredCategories: categoryKeys,
     selectedCategories: categoryKeys,
+    categories: DEFAULT_REQUIRED_CATEGORIES,
     pages,
     rejectedCards: [],
     filteredCards: [],
@@ -98,18 +83,17 @@ function makeFixture(count = 2) {
     products,
     runStats: { rejectedCards: 0, unparseableCards: 0, filteredOutCards: 0, categoryStats: {} },
   };
-  const managedSetManifest = {
-    schemaVersion: 1,
-    manifestVersion: '2026-08-18T06:00:00.000Z',
-    createdAt: '2026-08-18T06:00:00.000Z',
-    partner: PARTNER,
-    source: 'superzoo-scraper',
-    selectionPolicyVersion: 'superzoo-price-only-existing-offers-v1',
-    evidence: { inputs: [{ role: 'embeddedApplicationCatalog', sha256: CATALOG_SHA }], sourceCounts: {} },
-    entries,
-  };
-  managedSetManifest.entries.sort((left, right) => left.sourceRowIdentity.localeCompare(right.sourceRowIdentity) || left.productId.localeCompare(right.productId));
-  return { raw, sidecar, managedSetManifest, catalog, catalogSha256: CATALOG_SHA, managedSetSha256: MANIFEST_SHA, generatedAt: '2026-08-18T07:00:00.000Z' };
+  const automationBaseline = buildAutomationBaseline({
+    catalog,
+    publicCatalog: structuredClone(catalog),
+    raw,
+    sidecar,
+    catalogSha256: CATALOG_SHA,
+    publicCatalogSha256: CATALOG_SHA,
+    rawSha256: 'c'.repeat(64),
+    sidecarSha256: 'd'.repeat(64),
+  }).baseline;
+  return { raw, sidecar, automationBaseline, catalog, catalogSha256: CATALOG_SHA, automationBaselineSha256: BASELINE_SHA, generatedAt: '2026-08-18T07:00:00.000Z' };
 }
 
 function runCase(change = () => {}) {
@@ -122,14 +106,14 @@ function hasBlocker(result, code) {
   return result.report.blockers.some(blocker => blocker.code === code);
 }
 
-test('valid managed coverage passes and derives count from manifest', () => {
+test('valid managed coverage passes and derives count from automation baseline', () => {
   const result = runCase();
   assert.equal(result.report.passed, true);
   assert.equal(result.report.managedCoverage.observed, 2);
   assert.equal(result.report.managedCoverage.required, 2);
 });
 
-test('production-sized manifest coverage is evaluated as 534/534 without a hardcoded validator count', () => {
+test('large automation baseline coverage is evaluated without a hardcoded validator count', () => {
   const result = buildSuperZooManagedPriceCandidate(makeFixture(534));
   assert.equal(result.report.passed, true);
   assert.deepEqual(result.report.managedCoverage, { observed: 534, required: 534, ratio: 1 });
@@ -152,7 +136,7 @@ test('missing managed row fails closed', () => {
 });
 
 test('rejected managed row fails closed', () => {
-  const result = runCase(fixture => fixture.sidecar.rejectedCards.push({ canonicalUrl: fixture.managedSetManifest.entries[0].sourceIdentity }));
+  const result = runCase(fixture => fixture.sidecar.rejectedCards.push({ canonicalUrl: fixture.automationBaseline.approved[0].sourceIdentity }));
   assert.equal(result.report.passed, false);
   assert.ok(hasBlocker(result, 'managed_card_rejected'));
 });
@@ -162,20 +146,20 @@ test('duplicate source, ambiguous mapping, duplicate identity, wrong partner and
   assert.ok(hasBlocker(result, 'duplicate_source_identity'));
   result = runCase(fixture => fixture.catalog.push({ ...fixture.catalog[0], id: 'ambiguous' }));
   assert.ok(hasBlocker(result, 'ambiguous_managed_source_mapping'));
-  result = runCase(fixture => fixture.managedSetManifest.entries.push({ ...fixture.managedSetManifest.entries[0] }));
-  assert.ok(hasBlocker(result, 'duplicate_manifest_source_identity'));
-  result = runCase(fixture => { fixture.managedSetManifest.entries[0].offerIdentity.partner = 'Other'; });
+  result = runCase(fixture => fixture.automationBaseline.approved.push({ ...fixture.automationBaseline.approved[0] }));
+  assert.ok(hasBlocker(result, 'duplicate_source_identity'));
+  result = runCase(fixture => { fixture.automationBaseline.approved[0].partner = 'Other'; });
   assert.equal(result.report.passed, false);
-  result = runCase(fixture => { fixture.managedSetManifest.entries[0].productId = 'unknown-product'; });
+  result = runCase(fixture => { fixture.automationBaseline.approved[0].productId = 'unknown-product'; });
   assert.ok(hasBlocker(result, 'unknown_or_ambiguous_managed_product'));
 });
 
-test('catalog and managed manifest SHA mismatches fail closed', () => {
+test('catalog and automation baseline SHA mismatches fail closed', () => {
   let result = runCase(fixture => { fixture.expectedCatalogSha256 = 'd'.repeat(64); });
   assert.equal(result.report.passed, false);
-  result = runCase(fixture => { fixture.expectedManagedSetSha256 = 'e'.repeat(64); });
+  result = runCase(fixture => { fixture.expectedAutomationBaselineSha256 = 'e'.repeat(64); });
   assert.equal(result.report.passed, false);
-  assert.ok(hasBlocker(result, 'managed_set_sha_mismatch'));
+  assert.ok(hasBlocker(result, 'automation_baseline_sha_mismatch'));
 });
 
 for (const [name, mutate, blocker] of [
@@ -245,8 +229,6 @@ test('automation baseline adapts only exact-safe approved entries into managed c
   baseline.counts.unresolvedApproved = 1;
   const result = buildSuperZooManagedPriceCandidate({
     ...fixture,
-    managedSetManifest: null,
-    managedSetSha256: null,
     automationBaseline: baseline,
     automationBaselineSha256: 'e'.repeat(64),
   });
@@ -266,13 +248,35 @@ test('candidate entries contain only identity and price fields', () => {
   assert.equal(/gcloud|current\.json|firebase|firestore|child_process/i.test(fs.readFileSync(path.join(__dirname, '..', 'lib', 'superzoo-managed-price-validation.js'), 'utf8')), false);
 });
 
-test('workflow is dispatch-only and has no production side effects', () => {
+test('scheduled producer workflow is read-only, reproducible, and has no production side effects', () => {
   const workflow = fs.readFileSync(WORKFLOW, 'utf8');
+  assert.match(workflow, /schedule:\s*\n\s*- cron: '0 4 \* \* \*'/u);
   assert.match(workflow, /workflow_dispatch/u);
+  assert.match(workflow, /permissions:\s*\n\s*contents: read/u);
+  assert.match(workflow, /group: superzoo-managed-price-review/u);
+  assert.match(workflow, /cancel-in-progress: false/u);
+  assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/u);
+  assert.equal((workflow.match(/persist-credentials: false/gu) || []).length, 2);
+  assert.match(workflow, /run: npm test/u);
+  assert.match(workflow, /mktemp -d "\$RUNNER_TEMP\/superzoo-managed-price-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}-XXXXXX"/u);
   assert.match(workflow, /--automation-baseline="config\/superzoo-automation-baseline\.json"/u);
   assert.doesNotMatch(workflow, /--managed-set=/u);
-  assert.doesNotMatch(workflow, /schedule:/u);
-  assert.doesNotMatch(workflow, /gcloud|current\.json|PRICE_OVERLAY_SOURCE_URL|firebase|firestore|FCM|publisher|publish/iu);
+  assert.match(workflow, /superzoo-managed-price-provenance\.js/u);
+  assert.match(workflow, /superzoo-managed-price-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/u);
+  assert.doesNotMatch(workflow, /git\s+(?:commit|push)|gcloud|current\.json|PRICE_OVERLAY_SOURCE_URL|firebase|firestore|FCM|publisher|deploy-production/iu);
   assert.match(workflow, /actions\/upload-artifact@v4/u);
-  assert.match(workflow, /contents: read/u);
+  assert.match(workflow, /retention-days: 14/u);
+});
+
+test('daily validator loads without the legacy managed-set module', () => {
+  const source = fs.readFileSync(VALIDATOR, 'utf8');
+  assert.doesNotMatch(source, /superzoo-price-overlay-managed-set/u);
+  const script = [
+    "const Module = require('node:module');",
+    'const originalLoad = Module._load;',
+    "Module._load = (request, parent, isMain) => { if (request === './superzoo-price-overlay-managed-set') { const error = new Error('simulated missing legacy module'); error.code = 'MODULE_NOT_FOUND'; throw error; } return originalLoad(request, parent, isMain); };",
+    `require(${JSON.stringify(VALIDATOR)});`,
+  ].join('\n');
+  const result = childProcess.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
 });

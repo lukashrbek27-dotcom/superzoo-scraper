@@ -13,6 +13,25 @@ const config = loadConfig();
 const category = { name: 'Krmivo a pamlsky pro hlodavce', animalType: 'rodent' };
 const directory = () => fs.mkdtempSync(path.join(os.tmpdir(), 'superzoo-sidecar-test-'));
 const sidecarState = () => ({ pages: [], rejectedCards: [], filteredCards: [], rejectedByReason: {}, rejectedByCategory: {}, filteredByType: {}, filteredByCategory: {}, categoryTerminationReasons: {} });
+const product = (id, name, url) => ({ sourceProductId: id, name, price: '20 Kč', salePrice: null, originalPrice: null, url, image: `https://cdn.superzoo.cz/${id}.jpg`, category: category.name, animalType: 'rodent' });
+const extraction = (products, overrides = {}) => ({ selectorMissing: false, selector: '.product-list__item', domFingerprint: products.map(item => item.sourceProductId).join('\n'), rejectedCards: 0, unparseableCards: 0, rejectedReasons: {}, rejectedCardDetails: [], products, ...overrides });
+function pagedFakePage(pages, urls) {
+  let pageIndex = 0;
+  return {
+    get pageIndex() { return pageIndex; },
+    async evaluate(fn, args) {
+      if (args?.expectedCanonicalUrl) {
+        pageIndex += 1;
+        return { status: 'clicked', canonicalUrl: urls[pageIndex - 1], domFingerprint: pages[pageIndex - 1].domFingerprint };
+      }
+      if (fn.name === 'extractProductCards') return pages[pageIndex];
+      if (fn.name === 'productCardDomFingerprint') return pages[pageIndex].domFingerprint;
+      throw new Error(`Unexpected page evaluation: ${fn.name || 'anonymous'}`);
+    },
+    async waitForFunction() {},
+    url() { return urls[pageIndex]; },
+  };
+}
 
 test('review category keys are explicit, ordered, deduplicated, and fail closed outside review mode', () => {
   assert.deepEqual(selectReviewCategories([], null).map(item => item.key), CATEGORIES.map(item => item.key));
@@ -119,6 +138,50 @@ test('review sidecar is opt-in, records safe page/rejected/filtered metadata, an
   assert.deepEqual(document.categories, [category.name]);
   const serialized = JSON.stringify(document);
   assert.equal(/html|cookie|header|session|storage/i.test(serialized), false);
+});
+
+test('terminal page with only intentionally filtered cards terminates safely and keeps metadata', async () => {
+  const state = sidecarState();
+  const firstUrl = 'https://www.superzoo.cz/drobni-savci/krmivo-a-doplnky-stravy/plnohodnotne-krmivo/';
+  const lastUrl = `${firstUrl}?parameterFilter-page=11`;
+  const first = product('IN_SCOPE', 'Complete rodent pellets 1 kg', 'https://www.superzoo.cz/complete-rodent-pellets-1kg/');
+  const ferretOne = product('FERRET_1', 'Ferret complete pellets 1 kg', 'https://www.superzoo.cz/ferret-complete-pellets-1kg/');
+  const ferretTwo = product('FERRET_2', 'Krmivo pro fretky complete 2 kg', 'https://www.superzoo.cz/ferret-complete-pellets-2kg/');
+  const page = pagedFakePage([extraction([first]), extraction([ferretOne, ferretTwo])], [firstUrl, lastUrl]);
+  const result = await scrapeCategory(page, category, config, {
+    maxPages: 3, paginationTimeoutMs: 10, retryBaseDelayMs: 1, reviewSidecar: state,
+    navigateToCategory: async () => {}, closeCookieDialog: async () => {},
+    findNextPageControl: async currentPage => currentPage.pageIndex === 0 ? {} : null,
+  });
+  assert.equal(result.products.length, 1);
+  assert.equal(state.pages.length, 2);
+  assert.equal(state.pages[1].acceptedCount, 0);
+  assert.equal(state.pages[1].rejectedCount, 0);
+  assert.equal(state.pages[1].filteredCount, 2);
+  assert.equal(state.pages[1].terminationReason, 'no_next_control');
+  assert.equal(state.categoryTerminationReasons[category.name], 'no_next_control');
+  assert.deepEqual(state.filteredCards.map(item => item.reasonCode), ['wrong_or_unsupported_species', 'wrong_or_unsupported_species']);
+});
+
+test('all-filtered page with a next control remains fail-closed', async () => {
+  const ferret = product('FERRET_NEXT', 'Ferret complete pellets 1 kg', 'https://www.superzoo.cz/ferret-next-pellets-1kg/');
+  const page = pagedFakePage([extraction([ferret])], ['https://www.superzoo.cz/drobni-savci/krmivo-a-doplnky-stravy/plnohodnotne-krmivo/']);
+  await assert.rejects(scrapeCategory(page, category, config, {
+    maxPages: 3, reviewSidecar: sidecarState(), navigateToCategory: async () => {}, closeCookieDialog: async () => {},
+    findNextPageControl: async () => ({}),
+  }), /produced no in-scope products on page 1/);
+});
+
+test('empty and rejected pages remain fail-closed after the terminal-page exception', async () => {
+  const emptyPage = pagedFakePage([extraction([])], ['https://www.superzoo.cz/empty/']);
+  await assert.rejects(scrapeCategory(emptyPage, category, config, {
+    maxPages: 1, navigateToCategory: async () => {}, closeCookieDialog: async () => {}, findNextPageControl: async () => null,
+  }), /zero valid product cards on page 1/);
+  const rejected = product('FERRET_REJECTED', 'Ferret complete pellets 1 kg', 'https://www.superzoo.cz/ferret-rejected-1kg/');
+  const rejectedPage = pagedFakePage([extraction([rejected], { rejectedCards: 1, rejectedReasons: { missing_image: 1 } })], ['https://www.superzoo.cz/rejected/']);
+  await assert.rejects(scrapeCategory(rejectedPage, category, config, {
+    maxPages: 1, navigateToCategory: async () => {}, closeCookieDialog: async () => {}, findNextPageControl: async () => null,
+  }), /produced no in-scope products on page 1/);
 });
 
 test('scoped review maxPages stops after the first page without advancing pagination', async () => {

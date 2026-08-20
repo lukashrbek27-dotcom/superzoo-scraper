@@ -234,12 +234,15 @@ async function scrapeCategory(page, category, config, options = DEFAULTS) {
       incrementCount(options.reviewSidecar.rejectedByCategory, category.name);
     }
     let filteredCount = 0;
+    const filteredProducts = [];
+    let pageRejectedCount = extraction.rejectedCards + extraction.unparseableCards;
     for (const [cardIndex, extracted] of extraction.products.entries()) {
       const normalized = normalizeRawProduct(extracted, config);
       const decision = exclusionDecision(normalized, config, { mainFoodScope: true });
       const reason = decision?.reason || exclusionReason(normalized, config);
       if (reason) {
         stats.filteredOutCards += 1; filteredCount += 1;
+        filteredProducts.push(normalized);
         stats.rejectedReasons[`filtered_${reason}`] = (stats.rejectedReasons[`filtered_${reason}`] || 0) + 1;
         if (options.reviewSidecar) {
           const record = filteredDiagnostic(normalized, decision, category, pageIndex, cardIndex);
@@ -249,17 +252,21 @@ async function scrapeCategory(page, category, config, options = DEFAULTS) {
         }
         continue;
       }
-      if (!Number.isFinite(normalized.price) || normalized.price <= 0) { stats.rejectedCards += 1; stats.rejectedReasons.invalid_price = (stats.rejectedReasons.invalid_price || 0) + 1; continue; }
+      if (!Number.isFinite(normalized.price) || normalized.price <= 0) { pageRejectedCount += 1; stats.rejectedCards += 1; stats.rejectedReasons.invalid_price = (stats.rejectedReasons.invalid_price || 0) + 1; continue; }
       accepted.push(normalized);
       currentPage.push(normalized);
     }
-    if (currentPage.length === 0) throw new Error(`Category ${category.name} produced no in-scope products on page ${pageNumber}.`);
-    const fingerprint = pageFingerprint(currentPage);
+    const allCardsFiltered = extraction.products.length > 0
+      && pageRejectedCount === 0
+      && filteredCount === extraction.products.length
+      && currentPage.length === 0;
+    const nextControl = await (options.findNextPageControl || findNextPageControl)(page);
+    if (currentPage.length === 0 && !allCardsFiltered) throw new Error(`Category ${category.name} produced no in-scope products on page ${pageNumber}.`);
+    const fingerprint = pageFingerprint(currentPage.length > 0 ? currentPage : filteredProducts);
     if (options.reviewSidecar) options.reviewSidecar.pages.push({ category: category.name, pageUrl: sanitizeDiagnosticPageUrl(page.url()), pageNumber: null, pageIndex, cardSelector: extraction.selector, pageFingerprint: extraction.domFingerprint, productSetHash: hashProductSet(fingerprint), cardCount: extraction.products.length + extraction.rejectedCards, acceptedCount: currentPage.length, rejectedCount: extraction.rejectedCards, filteredCount, stateChanged: pageNumber === 1 ? false : true, duplicatePage: seenFingerprints.has(fingerprint), terminationReason: null });
     assertPageFingerprintNotSeen(seenFingerprints, fingerprint, category.name, pageNumber);
     seenFingerprints.add(fingerprint);
 
-    const nextControl = await (options.findNextPageControl || findNextPageControl)(page);
     if (!nextControl) {
       if (options.reviewSidecar) {
         options.reviewSidecar.pages[options.reviewSidecar.pages.length - 1].terminationReason = 'no_next_control';
@@ -267,6 +274,7 @@ async function scrapeCategory(page, category, config, options = DEFAULTS) {
       }
       break;
     }
+    if (allCardsFiltered) throw new Error(`Category ${category.name} produced no in-scope products on page ${pageNumber}.`);
     if (pageNumber === options.maxPages) {
       if (options.reviewSidecar && options.maxPages === 1) {
         options.reviewSidecar.pages[options.reviewSidecar.pages.length - 1].terminationReason = 'review_max_pages';
