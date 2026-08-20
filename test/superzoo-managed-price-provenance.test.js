@@ -51,7 +51,7 @@ test('PASS provenance binds run, commits, hashes, managed counts, and complete c
     const provenance = buildProvenance(value.options);
     assert.equal(provenance.verdict, 'SUPERZOO_SCHEDULED_PRODUCER_PASS');
     assert.deepEqual(provenance.run, { id: '12345', attempt: 2, repository: 'owner/superzoo-scraper', workflowRef: value.options.workflowRef });
-    assert.deepEqual(provenance.managedContract, { approved: 981, exactSafe: 917, unresolved: 64, coverage: { observed: 917, required: 917, ratio: 1 } });
+    assert.deepEqual(provenance.managedContract, { approved: 981, exactSafe: 933, unresolved: 48, coverage: { observed: 933, required: 933, ratio: 1 } });
     assert.equal(provenance.artifacts.length, 6);
     assert.equal(Object.values(provenance.remoteActions).every(action => action === false), true);
   } finally { fs.rmSync(value.root, { recursive: true, force: true }); }

@@ -119,6 +119,60 @@ test('large automation baseline coverage is evaluated without a hardcoded valida
   assert.deepEqual(result.report.managedCoverage, { observed: 534, required: 534, ratio: 1 });
 });
 
+test('normalized-title and exact-url multipack baseline methods retain full managed coverage', () => {
+  const titleFixture = makeFixture(1);
+  titleFixture.catalog[0] = {
+    ...titleFixture.catalog[0],
+    name: 'Krmivo Exact Recipe',
+    size: '6kg',
+    sizeKg: 6,
+    offers: [{ ...titleFixture.catalog[0].offers[0], affiliateUrl: affiliate('https://www.superzoo.cz/legacy-url') }],
+  };
+  titleFixture.raw.products[0] = {
+    ...titleFixture.raw.products[0],
+    canonicalUrl: 'https://www.superzoo.cz/current-url',
+    url: 'https://www.superzoo.cz/current-url',
+    name: 'Krmivo Exact Recipe 6 kg',
+    size: '6kg',
+    sizeKg: 6,
+  };
+  titleFixture.automationBaseline = buildAutomationBaseline({
+    catalog: titleFixture.catalog, publicCatalog: structuredClone(titleFixture.catalog), raw: titleFixture.raw, sidecar: titleFixture.sidecar,
+    catalogSha256: CATALOG_SHA, publicCatalogSha256: CATALOG_SHA, rawSha256: 'c'.repeat(64), sidecarSha256: 'd'.repeat(64),
+  }).baseline;
+  let result = buildSuperZooManagedPriceCandidate(titleFixture);
+  assert.equal(titleFixture.automationBaseline.approved[0].matchMethod, 'normalized_title_packing_v1');
+  assert.deepEqual(result.report.managedCoverage, { observed: 1, required: 1, ratio: 1 });
+  assert.equal(result.report.passed, true);
+
+  const multipackFixture = makeFixture(1);
+  multipackFixture.catalog[0] = {
+    ...multipackFixture.catalog[0], name: 'Prescription sample 12x', size: '85g', sizeKg: 0.085,
+    offers: [{ ...multipackFixture.catalog[0].offers[0], affiliateUrl: affiliate('https://www.superzoo.cz/same-product') }],
+  };
+  multipackFixture.raw.products[0] = {
+    ...multipackFixture.raw.products[0], canonicalUrl: 'https://www.superzoo.cz/same-product', url: 'https://www.superzoo.cz/same-product',
+    name: 'Prescription sample 12x85g', size: '12x85g', sizeKg: 1.02,
+  };
+  multipackFixture.automationBaseline = buildAutomationBaseline({
+    catalog: multipackFixture.catalog, publicCatalog: structuredClone(multipackFixture.catalog), raw: multipackFixture.raw, sidecar: multipackFixture.sidecar,
+    catalogSha256: CATALOG_SHA, publicCatalogSha256: CATALOG_SHA, rawSha256: 'c'.repeat(64), sidecarSha256: 'd'.repeat(64),
+  }).baseline;
+  result = buildSuperZooManagedPriceCandidate(multipackFixture);
+  assert.equal(multipackFixture.automationBaseline.approved[0].matchMethod, 'canonical_url_multipack_alias_v1');
+  assert.deepEqual(result.report.managedCoverage, { observed: 1, required: 1, ratio: 1 });
+  assert.equal(result.report.passed, true);
+});
+
+test('unknown baseline match method fails closed', () => {
+  const result = runCase(fixture => {
+    fixture.automationBaseline.approved[0].matchMethod = 'fuzzy_title';
+    fixture.automationBaseline.approved[0].identityFingerprint = require('../lib/superzoo-automation-baseline').identityFingerprint(fixture.automationBaseline.approved[0]);
+  });
+  assert.equal(result.report.passed, false);
+  assert.ok(hasBlocker(result, 'invalid_match_method'));
+});
+
 test('new non-managed product and non-managed rejection do not block', () => {
   const result = runCase(fixture => {
     fixture.raw.products.push({ canonicalUrl: 'https://www.superzoo.cz/new-product', price: 100, salePrice: null, originalPrice: null });
